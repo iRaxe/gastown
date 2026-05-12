@@ -33,6 +33,24 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestDaemonPathCandidatesIncludesLaunchdToolDirs(t *testing.T) {
+	home := filepath.Join("Users", "alice")
+	exePath := filepath.Join("opt", "homebrew", "bin", "gt")
+
+	got := daemonPathCandidates(home, exePath)
+	for _, want := range []string{
+		filepath.Dir(exePath),
+		filepath.Join(home, ".local/bin"),
+		filepath.Join(home, "bin"),
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+	} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("daemonPathCandidates(%q, %q) missing %q; got %v", home, exePath, want, got)
+		}
+	}
+}
+
 func TestStateFile(t *testing.T) {
 	townRoot := "/tmp/test-town"
 	expected := filepath.Join(townRoot, "daemon", "state.json")
