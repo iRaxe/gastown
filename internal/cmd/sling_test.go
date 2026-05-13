@@ -298,6 +298,98 @@ exit /b 0
 	}
 }
 
+func TestHookBeadWithRetryRoutesUpdateByBeadID(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town marker: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(townRoot, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir town beads: %v", err)
+	}
+
+	rigDir := filepath.Join(townRoot, "gastown", "mayor", "rig")
+	if err := os.MkdirAll(rigDir, 0755); err != nil {
+		t.Fatalf("mkdir rigDir: %v", err)
+	}
+	routes := strings.Join([]string{
+		`{"prefix":"gt-","path":"gastown/mayor/rig"}`,
+		`{"prefix":"hq-","path":"."}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+
+	binDir := filepath.Join(townRoot, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir binDir: %v", err)
+	}
+	logPath := filepath.Join(townRoot, "bd.log")
+	bdScript := `#!/bin/sh
+set -e
+echo "$(pwd)|BEADS_DIR=${BEADS_DIR:-}|$*" >> "${BD_LOG}"
+cmd="$1"
+shift || true
+case "$cmd" in
+  update)
+    if [ "$(pwd)" != "${RIG_DIR}" ]; then
+      echo "wrong update dir: $(pwd)" >&2
+      exit 1
+    fi
+    ;;
+  version)
+    echo "bd 0.1.0"
+    ;;
+esac
+exit 0
+`
+	bdScriptWindows := `@echo off
+setlocal enableextensions
+echo %CD%^|BEADS_DIR=%BEADS_DIR%^|%*>>"%BD_LOG%"
+set "cmd=%1"
+if "%cmd%"=="update" (
+  if /I not "%CD%"=="%RIG_DIR%" (
+    echo wrong update dir: %CD% 1>&2
+    exit /b 1
+  )
+)
+if "%cmd%"=="version" echo bd 0.1.0
+exit /b 0
+`
+	_ = writeBDStub(t, binDir, bdScript, bdScriptWindows)
+
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("RIG_DIR", rigDir)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BEADS_DIR", filepath.Join(townRoot, ".beads"))
+	t.Setenv("GT_TEST_SKIP_HOOK_VERIFY", "1")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(townRoot); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := hookBeadWithRetry("gt-wisp-xyz", "deacon", townRoot); err != nil {
+		t.Fatalf("hookBeadWithRetry: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	log := string(logBytes)
+	if !strings.Contains(log, rigDir+"|BEADS_DIR=|update gt-wisp-xyz --status=hooked --assignee=deacon") {
+		t.Fatalf("hook update did not route through bead owner dir with BEADS_DIR stripped; log: %q", log)
+	}
+}
+
 func TestSlingRollsBackSpawnedPolecatOnInstantiateFailure(t *testing.T) {
 	townRoot := t.TempDir()
 
