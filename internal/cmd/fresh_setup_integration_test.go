@@ -179,10 +179,18 @@ func showFreshSetupIssue(t *testing.T, dir string, env []string, id string) fres
 	t.Helper()
 	out := runFreshSetupOutputCmd(t, dir, env, "bd", "show", id, "--json")
 	var issue freshSetupIssue
-	if err := json.Unmarshal([]byte(out), &issue); err != nil {
+	if err := json.Unmarshal([]byte(out), &issue); err == nil {
+		return issue
+	}
+
+	var issues []freshSetupIssue
+	if err := json.Unmarshal([]byte(out), &issues); err != nil {
 		t.Fatalf("parse bd show output: %v\n%s", err, out)
 	}
-	return issue
+	if len(issues) != 1 {
+		t.Fatalf("bd show %s returned %d issues, want 1\n%s", id, len(issues), out)
+	}
+	return issues[0]
 }
 
 func assertTownBeadsPrefix(t *testing.T, hqPath string) {
