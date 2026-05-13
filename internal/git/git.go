@@ -2065,6 +2065,11 @@ var runtimeArtifactDirNames = []string{
 	"node_modules",
 	".vitest",
 	".vite",
+	".pytest_cache",
+	".mypy_cache",
+	".ruff_cache",
+	"coverage",
+	"htmlcov",
 }
 
 // RuntimeArtifactPathspecs are pathspecs that should be unstaged after broad
@@ -2079,8 +2084,15 @@ var RuntimeArtifactPathspecs = []string{
 	"node_modules/", ":(glob)**/node_modules/**",
 	".vitest/", ":(glob)**/.vitest/**",
 	".vite/", ":(glob)**/.vite/**",
+	".pytest_cache/", ":(glob)**/.pytest_cache/**",
+	".mypy_cache/", ":(glob)**/.mypy_cache/**",
+	".ruff_cache/", ":(glob)**/.ruff_cache/**",
+	"coverage/", ":(glob)**/coverage/**",
+	"htmlcov/", ":(glob)**/htmlcov/**",
 	"*.db", ":(glob)**/*.db",
 	"*.db-*", ":(glob)**/*.db-*",
+	"*.pyc", ":(glob)**/*.pyc",
+	".DS_Store", ":(glob)**/.DS_Store",
 }
 
 // isGasTownRuntimePath returns true if the path is a runtime artifact that
@@ -2105,7 +2117,7 @@ func isGasTownRuntimePath(path string) bool {
 			return true
 		}
 	}
-	if isRuntimeDatabaseFile(base) {
+	if isRuntimeGeneratedFile(base) {
 		return true
 	}
 	// CLAUDE.local.md is a Gas Town overlay file written by CreatePolecatCLAUDEmd.
@@ -2116,8 +2128,11 @@ func isGasTownRuntimePath(path string) bool {
 	return false
 }
 
-func isRuntimeDatabaseFile(base string) bool {
-	return strings.HasSuffix(base, ".db") || strings.Contains(base, ".db-")
+func isRuntimeGeneratedFile(base string) bool {
+	return strings.HasSuffix(base, ".db") ||
+		strings.Contains(base, ".db-") ||
+		strings.HasSuffix(base, ".pyc") ||
+		base == ".DS_Store"
 }
 
 // CleanExcludingRuntime returns true if the only uncommitted changes are runtime
