@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/steveyegge/gastown/internal/config"
 )
@@ -45,6 +46,7 @@ func (c *DeprecatedMergeQueueKeysCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	c.affectedFiles = make(map[string][]string)
+	affectedRigs := make(map[string]bool)
 	var details []string
 
 	for _, rigPath := range rigs {
@@ -57,6 +59,7 @@ func (c *DeprecatedMergeQueueKeysCheck) Run(ctx *CheckContext) *CheckResult {
 				continue
 			}
 			c.affectedFiles[configPath] = found
+			affectedRigs[rigPath] = true
 			rigName := filepath.Base(rigPath)
 			for _, key := range found {
 				details = append(details, fmt.Sprintf("%s/%s: merge_queue.%s is deprecated and has no effect", rigName, configDisplayPath(configPath), key))
@@ -75,7 +78,7 @@ func (c *DeprecatedMergeQueueKeysCheck) Run(ctx *CheckContext) *CheckResult {
 	return &CheckResult{
 		Name:    c.Name(),
 		Status:  StatusWarning,
-		Message: fmt.Sprintf("Found deprecated merge_queue keys in %d rig(s)", len(c.affectedFiles)),
+		Message: fmt.Sprintf("Found deprecated merge_queue keys in %d rig(s)", len(affectedRigs)),
 		Details: details,
 		FixHint: "Run 'gt doctor --fix' to migrate/remove deprecated merge_queue keys",
 	}
@@ -83,7 +86,16 @@ func (c *DeprecatedMergeQueueKeysCheck) Run(ctx *CheckContext) *CheckResult {
 
 // Fix migrates safe deprecated values and removes deprecated keys from all affected files.
 func (c *DeprecatedMergeQueueKeysCheck) Fix(ctx *CheckContext) error {
-	for configPath, keys := range c.affectedFiles {
+	paths := make([]string, 0, len(c.affectedFiles))
+	for configPath := range c.affectedFiles {
+		paths = append(paths, configPath)
+	}
+	sort.Strings(paths)
+	if err := validateDeprecatedKeyConflicts(paths); err != nil {
+		return err
+	}
+	for _, configPath := range paths {
+		keys := c.affectedFiles[configPath]
 		if err := migrateDeprecatedKeys(configPath, keys); err != nil {
 			return fmt.Errorf("fixing %s: %w", configPath, err)
 		}
@@ -91,6 +103,50 @@ func (c *DeprecatedMergeQueueKeysCheck) Fix(ctx *CheckContext) error {
 	// Clear cache so re-run picks up fixed state
 	c.affectedFiles = nil
 	return nil
+}
+
+func validateDeprecatedKeyConflicts(paths []string) error {
+	byRig := make(map[string][]string)
+	for _, path := range paths {
+		byRig[rigRootForConfig(path)] = append(byRig[rigRootForConfig(path)], path)
+	}
+	for rigRoot, rigPaths := range byRig {
+		if len(rigPaths) < 2 {
+			continue
+		}
+		values := make(map[string]string)
+		for _, path := range rigPaths {
+			for _, key := range config.DeprecatedMergeQueueKeys {
+				value, ok := deprecatedKeyValue(path, key)
+				if !ok {
+					continue
+				}
+				if existing, seen := values[key]; seen && existing != value {
+					return fmt.Errorf("%s has conflicting merge_queue.%s values across config files; resolve manually before running fix", rigRoot, key)
+				}
+				values[key] = value
+			}
+		}
+	}
+	return nil
+}
+
+func deprecatedKeyValue(path, key string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	var raw struct {
+		MergeQueue map[string]json.RawMessage `json:"merge_queue"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil || raw.MergeQueue == nil {
+		return "", false
+	}
+	value, ok := raw.MergeQueue[key]
+	if !ok {
+		return "", false
+	}
+	return string(value), true
 }
 
 // findDeprecatedKeys reads a settings file and returns any deprecated merge_queue keys found.
@@ -219,9 +275,13 @@ func setRootDefaultBranchIfAbsent(path, targetBranch string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return err
+			}
+			data = []byte(`{}`)
+		} else {
+			return err
 		}
-		return err
 	}
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {

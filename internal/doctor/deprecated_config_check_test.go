@@ -225,6 +225,60 @@ func TestDeprecatedMergeQueueKeysCheck_FixMigratesSettingsValues(t *testing.T) {
 	}
 }
 
+func TestDeprecatedMergeQueueKeysCheck_FixCreatesRootConfigForSettingsTarget(t *testing.T) {
+	townRoot := setupTownWithSettings(t, map[string]interface{}{
+		"merge_queue": map[string]interface{}{
+			"target_branch": "develop",
+		},
+	})
+	rigPath := findAllRigs(townRoot)[0]
+
+	check := NewDeprecatedMergeQueueKeysCheck()
+	ctx := &CheckContext{TownRoot: townRoot}
+	if result := check.Run(ctx); result.Status != StatusWarning {
+		t.Fatalf("expected StatusWarning before fix, got %v", result.Status)
+	}
+	if err := check.Fix(ctx); err != nil {
+		t.Fatalf("Fix() error: %v", err)
+	}
+
+	root := readJSONFile(t, filepath.Join(rigPath, "config.json"))
+	if got := jsonString(t, root["default_branch"]); got != "develop" {
+		t.Fatalf("default_branch = %q, want develop", got)
+	}
+	if result := check.Run(ctx); result.Status != StatusOK {
+		t.Fatalf("expected StatusOK after fix, got %v: %s", result.Status, result.Message)
+	}
+}
+
+func TestDeprecatedMergeQueueKeysCheck_FixRejectsConflictingValues(t *testing.T) {
+	townRoot := setupTownWithSettings(t, map[string]interface{}{
+		"merge_queue": map[string]interface{}{
+			"target_branch":        "develop",
+			"integration_branches": false,
+		},
+	})
+	rigPath := findAllRigs(townRoot)[0]
+	writeJSONFile(t, filepath.Join(rigPath, "config.json"), map[string]interface{}{
+		"type":    "rig",
+		"version": 1,
+		"name":    "testrig",
+		"merge_queue": map[string]interface{}{
+			"target_branch":        "release",
+			"integration_branches": true,
+		},
+	})
+
+	check := NewDeprecatedMergeQueueKeysCheck()
+	ctx := &CheckContext{TownRoot: townRoot}
+	if result := check.Run(ctx); result.Status != StatusWarning {
+		t.Fatalf("expected StatusWarning before fix, got %v", result.Status)
+	}
+	if err := check.Fix(ctx); err == nil {
+		t.Fatal("Fix() error = nil, want conflict error")
+	}
+}
+
 func TestDeprecatedMergeQueueKeysCheck_DetectsAndFixesRootConfig(t *testing.T) {
 	townRoot := setupTownMinimal(t)
 	rigPath := findAllRigs(townRoot)[0]
