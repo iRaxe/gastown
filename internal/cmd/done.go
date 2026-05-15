@@ -532,11 +532,18 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// where zero commits is expected.
 		// Must be checked before the zero-commit guard below (GH#2496, gt-kvf).
 		isNoMergeTask := false
+		intentionalNoMergeReason := ""
 		if issueID != "" {
 			noMergeBd := beads.New(cwd)
 			if noMergeIssue, showErr := noMergeBd.Show(issueID); showErr == nil {
-				if af := beads.ParseAttachmentFields(noMergeIssue); af != nil && (af.NoMerge || af.ReviewOnly) {
-					isNoMergeTask = true
+				if af := beads.ParseAttachmentFields(noMergeIssue); af != nil {
+					if af.NoMerge {
+						isNoMergeTask = true
+						intentionalNoMergeReason = "no_merge"
+					} else if af.ReviewOnly {
+						isNoMergeTask = true
+						intentionalNoMergeReason = "review_only"
+					}
 				}
 			}
 		}
@@ -579,6 +586,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			fmt.Printf("  Skipping MR creation - completing without merge request.\n\n")
 			mergeQueueSkipped = true
 			mergeQueueSkipReason = "no_commits"
+			if intentionalNoMergeReason != "" {
+				mergeQueueSkipReason = intentionalNoMergeReason
+			}
 
 			// G15 fix: Close the base issue when completing with no MR.
 			// Without this, no-op polecats (bug already fixed) leave issues stuck
@@ -751,6 +761,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			fmt.Printf("%s Branch pushed directly to %s\n", style.Bold.Render("✓"), defaultBranch)
 			mergeQueueSkipped = true
 			mergeQueueSkipReason = "direct"
+			if doneCleanupStatus == "unpushed" {
+				doneCleanupStatus = "clean"
+			}
 
 			// Close the base issue — no MR/refinery will close it
 			if issueID != "" {
@@ -905,13 +918,19 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		sourceIssueForNoMerge, err := bd.Show(issueID)
 		if err == nil {
 			attachmentFields := beads.ParseAttachmentFields(sourceIssueForNoMerge)
-			if attachmentFields != nil && attachmentFields.NoMerge {
-				fmt.Printf("%s No-merge mode: skipping merge queue\n", style.Bold.Render("→"))
+			if attachmentFields != nil && (attachmentFields.NoMerge || attachmentFields.ReviewOnly) {
+				skipReason := "no_merge"
+				modeLabel := "No-merge mode"
+				if attachmentFields.ReviewOnly && !attachmentFields.NoMerge {
+					skipReason = "review_only"
+					modeLabel = "Review-only mode"
+				}
+				fmt.Printf("%s %s: skipping merge queue\n", style.Bold.Render("→"), modeLabel)
 				fmt.Printf("  Branch: %s\n", branch)
 				fmt.Printf("  Issue: %s\n", issueID)
 				fmt.Println()
 				mergeQueueSkipped = true
-				mergeQueueSkipReason = "no_merge"
+				mergeQueueSkipReason = skipReason
 
 				// When merge_strategy=pr, create a GitHub PR for human review
 				// instead of just leaving the branch on origin (gas-rfi).
@@ -1066,6 +1085,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				fmt.Printf("%s Branch pushed directly to %s\n", style.Bold.Render("✓"), defaultBranch)
 				mergeQueueSkipped = true
 				mergeQueueSkipReason = "direct"
+				if doneCleanupStatus == "unpushed" {
+					doneCleanupStatus = "clean"
+				}
 
 				// Close the issue directly — refinery won't process it.
 				if issueID != "" {

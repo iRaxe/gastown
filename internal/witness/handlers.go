@@ -2184,9 +2184,6 @@ func clearCompletionMetadata(bd *BdCli, workDir, agentBeadID string) error {
 	fields.ExitType = ""
 	fields.MRID = ""
 	fields.Branch = ""
-	fields.CompletedHookBead = ""
-	fields.MergeQueueSkipped = false
-	fields.MergeQueueSkipReason = ""
 	fields.MRFailed = false
 	fields.CompletionTime = ""
 

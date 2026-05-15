@@ -1084,7 +1084,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	} else {
 		// Use cleanup_status from agent bead
 		status.CleanupStatus = polecat.CleanupStatus(fields.CleanupStatus)
-		if status.CleanupStatus.IsSafe() && isActiveMRTerminal(bd, fields.ActiveMR) {
+		if status.CleanupStatus.IsSafe() && isActiveMRTerminal(bd, fields.ActiveMR) && !fields.MRFailed && !fields.PushFailed {
 			status.NeedsRecovery = false
 			status.Verdict = "SAFE_TO_NUKE"
 		} else {
@@ -1107,7 +1107,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	// done, which just ran `gt done` again and died, over and over.
 	if status.Verdict == "SAFE_TO_NUKE" && status.Branch != "" {
 		mqBd := beads.New(r.Path)
-		if recoveryMergeQueueNotRequired(fields) {
+		if recoveryMergeQueueNotRequired(fields, status.Issue) {
 			status.MQStatus = "not_required"
 		} else {
 			beadTerminal := isAssignedBeadTerminal(mqBd, status.Issue)
@@ -1187,8 +1187,14 @@ func recoveryIssueID(activeIssue string, fields *beads.AgentFields) string {
 	return fields.CompletedHookBead
 }
 
-func recoveryMergeQueueNotRequired(fields *beads.AgentFields) bool {
-	return fields != nil && fields.MergeQueueSkipped
+func recoveryMergeQueueNotRequired(fields *beads.AgentFields, issueID string) bool {
+	if fields == nil || !fields.MergeQueueSkipped {
+		return false
+	}
+	if fields.CompletedHookBead == "" || issueID == "" {
+		return true
+	}
+	return fields.CompletedHookBead == issueID
 }
 
 // mrFinder is the subset of *beads.Beads that applyMQCheck needs. It lets us

@@ -386,6 +386,9 @@ func (b *Beads) ResetAgentBeadForReuse(id, reason string) error {
 	fields.ExitType = ""
 	fields.MRID = ""
 	fields.Branch = ""
+	fields.CompletedHookBead = ""
+	fields.MergeQueueSkipped = false
+	fields.MergeQueueSkipReason = ""
 	fields.MRFailed = false
 	fields.CompletionTime = ""
 

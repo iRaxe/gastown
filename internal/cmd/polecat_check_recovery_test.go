@@ -175,9 +175,16 @@ func TestRecoveryCompletionMetadata(t *testing.T) {
 	})
 
 	t.Run("merge queue skipped means mq not required", func(t *testing.T) {
-		fields := &beads.AgentFields{MergeQueueSkipped: true, MergeQueueSkipReason: "no_merge"}
-		if !recoveryMergeQueueNotRequired(fields) {
+		fields := &beads.AgentFields{CompletedHookBead: "gt-done-123", MergeQueueSkipped: true, MergeQueueSkipReason: "no_merge"}
+		if !recoveryMergeQueueNotRequired(fields, "gt-done-123") {
 			t.Fatal("recoveryMergeQueueNotRequired() = false, want true")
+		}
+	})
+
+	t.Run("merge queue skip is scoped to completed issue", func(t *testing.T) {
+		fields := &beads.AgentFields{CompletedHookBead: "gt-done-123", MergeQueueSkipped: true, MergeQueueSkipReason: "no_merge"}
+		if recoveryMergeQueueNotRequired(fields, "gt-active-456") {
+			t.Fatal("recoveryMergeQueueNotRequired() = true for different active issue, want false")
 		}
 	})
 }
