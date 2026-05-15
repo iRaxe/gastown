@@ -382,7 +382,7 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 }
 
 func resolveMQSubmitCommitSHA(g *git.Git, branch string) (string, error) {
-	return g.Rev(branch)
+	return g.Rev(fmt.Sprintf("refs/heads/%s^{commit}", branch))
 }
 
 // checkMoleculeStepDeps verifies that all prerequisite molecule steps are closed

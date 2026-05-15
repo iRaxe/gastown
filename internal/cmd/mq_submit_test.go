@@ -27,6 +27,7 @@ func TestResolveMQSubmitCommitSHAUsesSubmittedBranch(t *testing.T) {
 	writeMQSubmitTestFile(t, repo, "file.txt", "feature\n")
 	runGitForMQSubmitTest(t, repo, "commit", "-am", "feature")
 	featureSHA := runGitForMQSubmitTest(t, repo, "rev-parse", "HEAD")
+	runGitForMQSubmitTest(t, repo, "tag", "feature/pr-target", mainSHA)
 
 	runGitForMQSubmitTest(t, repo, "checkout", "main")
 	g := gitpkg.NewGit(repo)
