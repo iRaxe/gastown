@@ -1146,8 +1146,10 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		mqBd := beads.New(r.Path)
 		beadTerminal := isAssignedBeadTerminal(mqBd, status.Issue)
 		gitState, gitErr := getGitState(p.ClonePath)
-		hasSubmittableWork := hasSubmittableWorkForRecovery(p.ClonePath, gitState, gitErr)
-		applyMQCheck(&status, mqBd, beadTerminal, hasSubmittableWork)
+		if !applyIdleBaseBranchRecoveryCheck(&status, p.ClonePath, gitState, gitErr) {
+			hasSubmittableWork := hasSubmittableWorkForRecovery(p.ClonePath, gitState, gitErr)
+			applyMQCheck(&status, mqBd, beadTerminal, hasSubmittableWork)
+		}
 	}
 
 	// JSON output
@@ -1280,6 +1282,21 @@ func activeMRBlocker(bd issueShower, mrID string) string {
 		return ""
 	}
 	return fmt.Sprintf("active_mr=%s status=%s", mrID, mr.Status)
+}
+
+func applyIdleBaseBranchRecoveryCheck(status *RecoveryStatus, worktreePath string, gitState *GitState, gitErr error) bool {
+	if status == nil || status.Issue != "" || !isRecoveryBaseBranch(status.Branch) {
+		return false
+	}
+	status.MQStatus = "not_required"
+	if blocker := recoveryGitStateBlocker(worktreePath, gitState, gitErr); blocker != "" {
+		status.Blockers = append(status.Blockers, blocker)
+		status.NeedsRecovery = true
+		status.Verdict = "NEEDS_RECOVERY"
+		return true
+	}
+	status.Diagnostics = append(status.Diagnostics, "idle_base_branch_no_issue")
+	return true
 }
 
 func hasSubmittableWorkForRecovery(worktreePath string, gitState *GitState, gitErr error) bool {

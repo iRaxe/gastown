@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -274,6 +275,89 @@ func TestActiveMRBlocker(t *testing.T) {
 			got := activeMRBlocker(tt.bd, tt.mrID)
 			if got != tt.want {
 				t.Errorf("activeMRBlocker() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyIdleBaseBranchRecoveryCheck(t *testing.T) {
+	tests := []struct {
+		name           string
+		status         RecoveryStatus
+		gitState       *GitState
+		gitErr         error
+		wantHandled    bool
+		wantVerdict    string
+		wantMQStatus   string
+		wantNeedsRecov bool
+		wantBlocker    string
+		wantDiagnostic string
+	}{
+		{
+			name:           "idle main with clean git state does not need MQ submission",
+			status:         RecoveryStatus{Branch: "main", Verdict: "SAFE_TO_NUKE"},
+			gitState:       &GitState{Clean: true},
+			wantHandled:    true,
+			wantVerdict:    "SAFE_TO_NUKE",
+			wantMQStatus:   "not_required",
+			wantDiagnostic: "idle_base_branch_no_issue",
+		},
+		{
+			name:           "idle integration branch with clean git state does not need MQ submission",
+			status:         RecoveryStatus{Branch: "integration/rca-cleanup-2026-05-15", Verdict: "SAFE_TO_NUKE"},
+			gitState:       &GitState{Clean: true},
+			wantHandled:    true,
+			wantVerdict:    "SAFE_TO_NUKE",
+			wantMQStatus:   "not_required",
+			wantDiagnostic: "idle_base_branch_no_issue",
+		},
+		{
+			name:           "idle main still preserves real unpushed safety",
+			status:         RecoveryStatus{Branch: "main", Verdict: "SAFE_TO_NUKE"},
+			gitState:       &GitState{UnpushedCommits: 2},
+			wantHandled:    true,
+			wantVerdict:    "NEEDS_RECOVERY",
+			wantMQStatus:   "not_required",
+			wantNeedsRecov: true,
+			wantBlocker:    "git_state=has_unpushed unpushed_commits=2",
+		},
+		{
+			name:        "assigned main branch remains eligible for MQ check",
+			status:      RecoveryStatus{Branch: "main", Issue: "gt-work", Verdict: "SAFE_TO_NUKE"},
+			gitState:    &GitState{Clean: true},
+			wantHandled: false,
+			wantVerdict: "SAFE_TO_NUKE",
+		},
+		{
+			name:        "idle feature branch remains eligible for MQ check",
+			status:      RecoveryStatus{Branch: "polecat/test", Verdict: "SAFE_TO_NUKE"},
+			gitState:    &GitState{Clean: true},
+			wantHandled: false,
+			wantVerdict: "SAFE_TO_NUKE",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status := tt.status
+			handled := applyIdleBaseBranchRecoveryCheck(&status, "/tmp/polecat", tt.gitState, tt.gitErr)
+			if handled != tt.wantHandled {
+				t.Fatalf("handled = %v, want %v", handled, tt.wantHandled)
+			}
+			if status.Verdict != tt.wantVerdict {
+				t.Errorf("Verdict = %q, want %q", status.Verdict, tt.wantVerdict)
+			}
+			if status.MQStatus != tt.wantMQStatus {
+				t.Errorf("MQStatus = %q, want %q", status.MQStatus, tt.wantMQStatus)
+			}
+			if status.NeedsRecovery != tt.wantNeedsRecov {
+				t.Errorf("NeedsRecovery = %v, want %v", status.NeedsRecovery, tt.wantNeedsRecov)
+			}
+			if tt.wantBlocker != "" && !slices.Contains(status.Blockers, tt.wantBlocker) {
+				t.Errorf("Blockers = %v, want %q", status.Blockers, tt.wantBlocker)
+			}
+			if tt.wantDiagnostic != "" && !slices.Contains(status.Diagnostics, tt.wantDiagnostic) {
+				t.Errorf("Diagnostics = %v, want %q", status.Diagnostics, tt.wantDiagnostic)
 			}
 		})
 	}
