@@ -476,7 +476,7 @@ func TestBdCmd_WithBeadsDir_OverridesInherited(t *testing.T) {
 	}
 }
 
-func TestBdCmd_WithBeadsDir_OverridesInheritedDoltTarget(t *testing.T) {
+func TestBdCmd_WithBeadsDir_StripsInheritedDoltTarget(t *testing.T) {
 	beadsDir := filepath.Join(t.TempDir(), ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("mkdir beads dir: %v", err)
@@ -507,13 +507,78 @@ func TestBdCmd_WithBeadsDir_OverridesInheritedDoltTarget(t *testing.T) {
 	if envMap["BEADS_DIR"] != beadsDir {
 		t.Errorf("BEADS_DIR = %q, want %q", envMap["BEADS_DIR"], beadsDir)
 	}
-	if envMap["BEADS_DOLT_SERVER_DATABASE"] != "rigdb" {
-		t.Errorf("BEADS_DOLT_SERVER_DATABASE = %q, want rigdb", envMap["BEADS_DOLT_SERVER_DATABASE"])
-	}
-	for _, key := range []string{"BEADS_DB", "BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
+	for _, key := range []string{"BEADS_DB", "BEADS_DOLT_SERVER_DATABASE", "BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
 		if value, ok := envMap[key]; ok {
 			t.Errorf("%s should be stripped when BEADS_DIR is pinned, got %q", key, value)
 		}
+	}
+}
+
+func TestBdCmd_WithBeadsDir_DoesNotForceServerDatabase(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir beads dir: %v", err)
+	}
+	metadata := []byte(`{"backend":"dolt","dolt_database":"rigdb","dolt_server_host":"127.0.0.1","dolt_server_port":3307}`)
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), metadata, 0644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	binDir := t.TempDir()
+	bdScript := `#!/bin/sh
+if [ -n "$BEADS_DOLT_SERVER_DATABASE" ]; then
+  echo "unexpected BEADS_DOLT_SERVER_DATABASE=$BEADS_DOLT_SERVER_DATABASE" >&2
+  exit 1
+fi
+if [ "$BEADS_DIR" != "$WANT_BEADS_DIR" ]; then
+  echo "unexpected BEADS_DIR=$BEADS_DIR" >&2
+  exit 1
+fi
+case "$1" in
+  show)
+    echo '[{"title":"Routed bead","status":"open","assignee":""}]'
+    ;;
+  version)
+    echo "bd version 1.0.3"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`
+	bdScriptWindows := `@echo off
+if not "%BEADS_DOLT_SERVER_DATABASE%"=="" (
+  echo unexpected BEADS_DOLT_SERVER_DATABASE=%BEADS_DOLT_SERVER_DATABASE% 1>&2
+  exit /b 1
+)
+if not "%BEADS_DIR%"=="%WANT_BEADS_DIR%" (
+  echo unexpected BEADS_DIR=%BEADS_DIR% 1>&2
+  exit /b 1
+)
+if "%1"=="show" (
+  echo [{"title":"Routed bead","status":"open","assignee":""}]
+  exit /b 0
+)
+if "%1"=="version" (
+  echo bd version 1.0.3
+  exit /b 0
+)
+exit /b 1
+`
+	_ = writeBDStub(t, binDir, bdScript, bdScriptWindows)
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("WANT_BEADS_DIR", beadsDir)
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "hq")
+
+	out, err := BdCmd("show", "gt-rca-epic-routing.3", "--json").
+		WithBeadsDir(beadsDir).
+		Output()
+	if err != nil {
+		t.Fatalf("BdCmd show failed: %v", err)
+	}
+	if !strings.Contains(string(out), "Routed bead") {
+		t.Fatalf("BdCmd show output = %q, want routed bead JSON", string(out))
 	}
 }
 

@@ -120,11 +120,7 @@ func pinBeadsDirEnv(env []string, beadsDir string) []string {
 	if beadsDir == "" {
 		return env
 	}
-	env = append(env, "BEADS_DIR="+beadsDir)
-	if dbEnv := beads.DatabaseEnv(beadsDir); dbEnv != "" {
-		env = append(env, dbEnv)
-	}
-	return env
+	return append(env, "BEADS_DIR="+beadsDir)
 }
 
 // buildEnv constructs the final environment slice based on configured options.
@@ -153,7 +149,9 @@ func (b *bdCmd) buildEnv() []string {
 	// Also clear inherited Dolt target variables. Dashboard and agent shells can
 	// carry a town-level or remote BEADS_DOLT_* target; keeping it while changing
 	// BEADS_DIR makes `bd show <displayed-id>` query a different database than
-	// `gt ready` used to render the row.
+	// `gt ready` used to render the row. Do not synthesize server env vars from
+	// metadata here: bd 1.0.3 treats BEADS_DOLT_SERVER_DATABASE as an override and
+	// can bypass the pinned BEADS_DIR/config routing that plain bd uses.
 	if b.beadsDir != "" {
 		env = pinBeadsDirEnv(env, b.beadsDir)
 	} else if b.dir != "" {
