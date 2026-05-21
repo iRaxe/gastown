@@ -592,6 +592,9 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 			if userProvidedPrefix && strings.TrimSuffix(opts.BeadsPrefix, "-") != strings.TrimSuffix(sourcePrefix, "-") {
 				return nil, fmt.Errorf("prefix mismatch: source repo uses '%s' but --prefix '%s' was provided; use --prefix %s to match existing issues", sourcePrefix, opts.BeadsPrefix, sourcePrefix)
 			}
+			if err := beads.CheckPrefixAvailable(m.townRoot, sourcePrefix+"-", opts.Name); err != nil {
+				return nil, fmt.Errorf("prefix collision (source repo prefix %q): %w", sourcePrefix, err)
+			}
 			// Use detected prefix (overrides derived prefix)
 			opts.BeadsPrefix = sourcePrefix
 			rigConfig.Beads.Prefix = sourcePrefix
@@ -865,6 +868,9 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 		route := beads.Route{
 			Prefix: opts.BeadsPrefix + "-",
 			Path:   routePath,
+		}
+		if err := beads.CheckPrefixAvailable(m.townRoot, route.Prefix, route.Path); err != nil {
+			return nil, fmt.Errorf("prefix collision before route registration: %w", err)
 		}
 		if err := beads.AppendRoute(m.townRoot, route); err != nil {
 			fmt.Printf("  Warning: Could not update routes.jsonl: %v\n", err)
