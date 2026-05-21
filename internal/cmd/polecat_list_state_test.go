@@ -122,7 +122,7 @@ func TestActiveMRBlocksReuse(t *testing.T) {
 	tests := []struct {
 		name string
 		mrID string
-		bd   reuseMRShower
+		bd   polecat.MRStatusReader
 		want bool
 	}{
 		{name: "empty active MR does not block"},

@@ -257,7 +257,8 @@ func (t *Tmux) wrapError(err error, stderr string, args []string) error {
 		return ErrSessionExists
 	}
 	if strings.Contains(stderr, "session not found") ||
-		strings.Contains(stderr, "can't find session") {
+		strings.Contains(stderr, "can't find session") ||
+		strings.Contains(stderr, "no such window") {
 		return ErrSessionNotFound
 	}
 
