@@ -1,6 +1,8 @@
 package tmux
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +52,22 @@ func TestNewSessionWithCommand_ExecEnvBadBinary(t *testing.T) {
 	err := tm.NewSessionWithCommand(session, "", cmd)
 	if err == nil {
 		t.Error("NewSessionWithCommand should return error for exec env with missing binary")
+	}
+}
+
+func TestNewSessionWithCommand_SessionDiesDuringStartup(t *testing.T) {
+	tm := newTestTmux(t)
+	session := "gt-test-dies-startup-" + t.Name()
+	_ = tm.KillSession(session)
+	defer func() { _ = tm.KillSession(session) }()
+
+	cmd := fmt.Sprintf("sh -c 'env -u TMUX tmux -u -L %s kill-session -t %s'", tm.socketName, session)
+	err := tm.NewSessionWithCommand(session, "", cmd)
+	if err == nil {
+		t.Fatal("NewSessionWithCommand should return error when session disappears during startup")
+	}
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("NewSessionWithCommand error = %v, want ErrSessionNotFound", err)
 	}
 }
 
