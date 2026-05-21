@@ -16,7 +16,6 @@ type SlotReuseInput struct {
 	State           State
 	HookBead        string
 	CleanupStatus   CleanupStatus
-	ActiveMR        string
 	ActiveMRBlocks  bool
 	PushFailed      bool
 	MRFailed        bool
