@@ -234,9 +234,11 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 		fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
 		var admission *polecatAdmissionHandle
 		if !opts.SkipPolecatAdmission {
-			admission, _, err = acquirePolecatAdmissionFn(townRoot, rigName, opts.HookBead, "target-spawn")
-			if err != nil {
-				return nil, err
+			admissionBead, operation := targetAdmissionContext(opts)
+			var admissionErr error
+			admission, _, admissionErr = acquirePolecatAdmissionFn(townRoot, rigName, admissionBead, operation)
+			if admissionErr != nil {
+				return nil, admissionErr
 			}
 		}
 		spawnOpts := SlingSpawnOptions{
@@ -291,7 +293,8 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 			fmt.Printf("Target polecat has no active session, spawning fresh polecat in rig '%s'...\n", rigName)
 			var admission *polecatAdmissionHandle
 			if !opts.SkipPolecatAdmission {
-				admission, _, err = acquirePolecatAdmissionFn(townRoot, rigName, opts.HookBead, "target-spawn")
+				admissionBead, operation := targetAdmissionContext(opts)
+				admission, _, err = acquirePolecatAdmissionFn(townRoot, rigName, admissionBead, operation)
 				if err != nil {
 					return nil, err
 				}
@@ -339,6 +342,16 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 	result.Pane = pane
 	result.WorkDir = workDir
 	return result, nil
+}
+
+func targetAdmissionContext(opts ResolveTargetOptions) (beadID, operation string) {
+	if opts.HookBead != "" {
+		return opts.HookBead, "direct-target"
+	}
+	if opts.WorkDesc != "" {
+		return opts.WorkDesc, "formula"
+	}
+	return "", "target-spawn"
 }
 
 func missingPolecatTargetRig(target string, allowShorthand bool, townRoot string) (string, bool) {

@@ -358,10 +358,14 @@ func TestExecuteSlingHoldsAdmissionUntilHookAttempt(t *testing.T) {
 		t.Fatalf("mkdir binDir: %v", err)
 	}
 	bdScript := `#!/bin/sh
-if [ "$1" = "--db" ]; then
+while [ "$1" = "--allow-stale" ] || [ "$1" = "--db" ]; do
+  if [ "$1" = "--allow-stale" ]; then
+    shift
+    continue
+  fi
   shift
   shift
-fi
+done
 cmd="$1"
 case "$cmd" in
   show)
@@ -374,10 +378,12 @@ esac
 exit 0
 `
 	bdScriptWindows := `@echo off
+if "%1"=="--allow-stale" shift
 if "%1"=="--db" (
   shift
   shift
 )
+if "%1"=="--allow-stale" shift
 if "%1"=="show" (
   echo [{"title":"Work","status":"open","assignee":"","description":""}]
   exit /b 0

@@ -119,32 +119,15 @@ func runSlingFormula(ctx context.Context, args []string) error {
 	if len(args) > 1 {
 		target = args[1]
 	}
-	var admission *polecatAdmissionHandle
-	if !slingDryRun && target != "" {
-		admissionRig := ""
-		if rigName, isRig := IsRigName(target); isRig {
-			admissionRig = rigName
-		} else if rigName, ok := missingPolecatTargetRig(target, slingCreate, townRoot); ok {
-			admissionRig = rigName
-		}
-		if admissionRig != "" {
-			admission, _, err = acquirePolecatAdmissionFn(townRoot, admissionRig, formulaName, "formula")
-			if err != nil {
-				return err
-			}
-			defer admission.Release()
-		}
-	}
 	resolved, err := resolveTarget(target, ResolveTargetOptions{
-		DryRun:               slingDryRun,
-		Force:                slingForce,
-		Create:               slingCreate,
-		Account:              slingAccount,
-		Agent:                slingAgent,
-		NoBoot:               slingNoBoot,
-		WorkDesc:             formulaName,
-		TownRoot:             townRoot,
-		SkipPolecatAdmission: admission != nil,
+		DryRun:   slingDryRun,
+		Force:    slingForce,
+		Create:   slingCreate,
+		Account:  slingAccount,
+		Agent:    slingAgent,
+		NoBoot:   slingNoBoot,
+		WorkDesc: formulaName,
+		TownRoot: townRoot,
 	})
 	if err != nil {
 		return err
@@ -154,6 +137,10 @@ func runSlingFormula(ctx context.Context, args []string) error {
 	formulaWorkDir := resolved.WorkDir
 	delayedDogInfo := resolved.DelayedDogInfo
 	isSelfSling := resolved.IsSelfSling
+	admission := resolved.PolecatAdmission
+	if admission != nil {
+		defer admission.Release()
+	}
 
 	fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, targetAgent)
 
