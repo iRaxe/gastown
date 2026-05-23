@@ -469,6 +469,12 @@ func TestClassifyDoltListener(t *testing.T) {
 			kind:     DoltServerUnknown,
 		},
 		{
+			name:     "non-temp strong evidence blocks temp cwd",
+			listener: DoltListener{PID: 107, Port: 45127},
+			evidence: doltProcessEvidence{ConfigPath: "/var/lib/dolt/config.yaml", CWD: tempDataDir, PPID: 1},
+			kind:     DoltServerUnknown,
+		},
+		{
 			name:     "random current town owner is production",
 			listener: DoltListener{PID: 106, Port: 45126},
 			evidence: doltProcessEvidence{DataDir: cfg.DataDir, PPID: 1},

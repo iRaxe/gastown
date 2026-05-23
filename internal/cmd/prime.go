@@ -571,7 +571,7 @@ func runPrimeExternalCommand(workDir, name string, args ...string) (bytes.Buffer
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	if name == "bd" {
-		beads.ConfigureCommand(cmd, workDir, beads.ResolveBeadsDir(workDir), beads.SubprocessModeForArgs(args))
+		beads.ConfigureCommandContext(cmd, workDir, beads.ResolveBeadsDir(workDir), beads.SubprocessModeForArgs(args))
 	} else {
 		cmd.Dir = workDir
 		cmd.Env = os.Environ()

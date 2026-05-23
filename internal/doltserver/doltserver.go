@@ -1248,7 +1248,18 @@ func classifyDoltListener(townRoot string, cfg *Config, l DoltListener, ev doltP
 }
 
 func hasSafeTempDoltEvidence(ev doltProcessEvidence) bool {
-	for _, path := range []string{ev.DataDir, ev.ConfigPath, ev.CWD, ev.StateDir} {
+	strongEvidence := []string{ev.DataDir, ev.ConfigPath}
+	for _, path := range strongEvidence {
+		if path != "" && !isTempDoltDataPath(path) {
+			return false
+		}
+	}
+	for _, path := range strongEvidence {
+		if path != "" {
+			return true
+		}
+	}
+	for _, path := range []string{ev.CWD, ev.StateDir} {
 		if isTempDoltDataPath(path) {
 			return true
 		}

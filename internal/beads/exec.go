@@ -31,8 +31,7 @@ func Command(dir, fallbackBeadsDir string, mode SubprocessEnvMode, args ...strin
 // environment policy.
 func CommandContext(ctx context.Context, dir, fallbackBeadsDir string, mode SubprocessEnvMode, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: args are constructed internally
-	ConfigureCommand(cmd, dir, fallbackBeadsDir, mode)
-	util.SetProcessGroup(cmd)
+	ConfigureCommandContext(cmd, dir, fallbackBeadsDir, mode)
 	return cmd
 }
 
@@ -42,6 +41,15 @@ func ConfigureCommand(cmd *exec.Cmd, dir, fallbackBeadsDir string, mode Subproce
 	cmd.Dir = dir
 	cmd.Env = EnvForSubprocessMode(os.Environ(), fallbackBeadsDir, mode)
 	util.SetDetachedProcessGroup(cmd)
+}
+
+// ConfigureCommandContext applies the bd subprocess policy to a context-bound
+// command. Context cancellation must clean the whole process group so bd child
+// processes cannot survive timeouts.
+func ConfigureCommandContext(cmd *exec.Cmd, dir, fallbackBeadsDir string, mode SubprocessEnvMode) {
+	cmd.Dir = dir
+	cmd.Env = EnvForSubprocessMode(os.Environ(), fallbackBeadsDir, mode)
+	util.SetProcessGroup(cmd)
 }
 
 func EnvForSubprocessMode(base []string, fallbackBeadsDir string, mode SubprocessEnvMode) []string {

@@ -281,7 +281,7 @@ func (dm *dogMol) runBd(args ...string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, bdPath, args...)
-	beads.ConfigureCommand(cmd, dm.townRoot, filepath.Join(dm.townRoot, ".beads"), beads.SubprocessModeForArgs(args))
+	beads.ConfigureCommandContext(cmd, dm.townRoot, filepath.Join(dm.townRoot, ".beads"), beads.SubprocessModeForArgs(args))
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
