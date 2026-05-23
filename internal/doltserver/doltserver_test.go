@@ -174,21 +174,32 @@ func TestReadSQLServerInfoRejectsMalformedContent(t *testing.T) {
 func TestResolveLiveServerPrefersVerifiedSQLInfoOverLegacyPidfile(t *testing.T) {
 	townRoot := t.TempDir()
 	dataDir := filepath.Join(townRoot, ".dolt-data")
+	daemonDir := filepath.Join(townRoot, "daemon")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(daemonDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dataDir, "dolt.pid"), []byte("111\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	pidFile := filepath.Join(daemonDir, "dolt.pid")
+	if err := os.WriteFile(pidFile, []byte("333\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
-	config := &Config{TownRoot: townRoot, Port: 3307, DataDir: dataDir, PidFile: filepath.Join(townRoot, "daemon", "dolt.pid")}
+	config := &Config{TownRoot: townRoot, Port: 3307, DataDir: dataDir, PidFile: pidFile}
 	info := &SQLServerInfo{PID: 222, Port: 3307, Path: filepath.Join(dataDir, ".dolt", "sql-server.info")}
-	status, err := resolveLiveServerWithConfig(townRoot, config, fakeLiveServerProbe(info, nil, map[int]bool{222: true}, 222, true, map[int]bool{222: true}))
+	status, err := resolveLiveServerWithConfig(townRoot, config, fakeLiveServerProbe(info, nil, map[int]bool{222: true, 333: true}, 222, true, map[int]bool{222: true, 333: true}))
 	if err != nil {
 		t.Fatalf("resolveLiveServerWithConfig: %v", err)
 	}
 	if !status.Running || status.PID != 222 || status.Source != "sql-server.info" {
 		t.Fatalf("status = %+v, want live PID 222 from sql-server.info", status)
+	}
+	if status.SourcePath == filepath.Join(dataDir, "dolt.pid") {
+		t.Fatalf("resolver trusted legacy pidfile source: %+v", status)
 	}
 }
 
@@ -229,6 +240,27 @@ func TestResolveLiveServerUsesDaemonStateWhenVerified(t *testing.T) {
 	}
 	if !status.Running || status.PID != 333 || status.Source != "daemon-state" || len(status.Databases) != 1 {
 		t.Fatalf("status = %+v, want verified daemon-state", status)
+	}
+}
+
+func TestResolveLiveServerUsesDaemonPidfileWhenVerified(t *testing.T) {
+	townRoot := t.TempDir()
+	daemonDir := filepath.Join(townRoot, "daemon")
+	if err := os.MkdirAll(daemonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(daemonDir, "dolt.pid")
+	if err := os.WriteFile(pidFile, []byte("555\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	config := &Config{TownRoot: townRoot, Port: 3307, DataDir: filepath.Join(townRoot, ".dolt-data"), PidFile: pidFile}
+	status, err := resolveLiveServerWithConfig(townRoot, config, fakeLiveServerProbe(nil, nil, map[int]bool{555: true}, 555, true, map[int]bool{555: true}))
+	if err != nil {
+		t.Fatalf("resolveLiveServerWithConfig: %v", err)
+	}
+	if !status.Running || status.PID != 555 || status.Source != "daemon-pidfile" || status.SourcePath != pidFile {
+		t.Fatalf("status = %+v, want verified daemon-pidfile", status)
 	}
 }
 
