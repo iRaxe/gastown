@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/activity"
+	"github.com/steveyegge/gastown/internal/config"
 )
 
 // Test error for simulating fetch failures
@@ -1148,6 +1149,61 @@ func TestConvoyHandler_CachePreventsDuplicateFetches(t *testing.T) {
 	// Verify both responses contain the same content
 	if w1.Body.String() != w2.Body.String() {
 		t.Error("Cached response should match original response")
+	}
+}
+
+func TestNewDashboardMux_ConfiguresDashboardCacheTTL(t *testing.T) {
+	mock := &MockConvoyFetcher{}
+	mux, err := NewDashboardMux(mock, &config.WebTimeoutsConfig{
+		DashboardCacheTTL: "25s",
+	})
+	if err != nil {
+		t.Fatalf("NewDashboardMux() error = %v", err)
+	}
+
+	serveMux, ok := mux.(*http.ServeMux)
+	if !ok {
+		t.Fatalf("NewDashboardMux() = %T, want *http.ServeMux", mux)
+	}
+	handler, _ := serveMux.Handler(httptest.NewRequest(http.MethodGet, "/", nil))
+	convoyHandler, ok := handler.(*ConvoyHandler)
+	if !ok {
+		t.Fatalf("dashboard handler = %T, want *ConvoyHandler", handler)
+	}
+
+	if convoyHandler.cacheTTL != 25*time.Second {
+		t.Errorf("cacheTTL = %v, want 25s", convoyHandler.cacheTTL)
+	}
+}
+
+func TestNewDashboardMux_InvalidDashboardCacheTTLUsesDefault(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"empty", ""},
+		{"invalid", "not-a-duration"},
+		{"zero", "0s"},
+		{"negative", "-1s"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux, err := NewDashboardMux(&MockConvoyFetcher{}, &config.WebTimeoutsConfig{
+				DashboardCacheTTL: tt.value,
+			})
+			if err != nil {
+				t.Fatalf("NewDashboardMux() error = %v", err)
+			}
+
+			serveMux := mux.(*http.ServeMux)
+			handler, _ := serveMux.Handler(httptest.NewRequest(http.MethodGet, "/", nil))
+			convoyHandler := handler.(*ConvoyHandler)
+
+			if convoyHandler.cacheTTL != defaultCacheTTL {
+				t.Errorf("cacheTTL = %v, want %v", convoyHandler.cacheTTL, defaultCacheTTL)
+			}
+		})
 	}
 }
 

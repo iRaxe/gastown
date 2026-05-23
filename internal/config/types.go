@@ -147,6 +147,10 @@ type WebTimeoutsConfig struct {
 	TmuxCmdTimeout string `json:"tmux_cmd_timeout,omitempty"`
 	// FetchTimeout is the maximum time for all dashboard data fetches. Default: "8s".
 	FetchTimeout string `json:"fetch_timeout,omitempty"`
+	// DashboardCacheTTL is the minimum interval between full dashboard fetches. Default: "10s".
+	DashboardCacheTTL string `json:"dashboard_cache_ttl,omitempty"`
+	// DashboardSSEInterval is the dashboard Server-Sent Events poll interval. Default: "2s".
+	DashboardSSEInterval string `json:"dashboard_sse_interval,omitempty"`
 	// DefaultRunTimeout is the default timeout for /api/run commands. Default: "30s".
 	DefaultRunTimeout string `json:"default_run_timeout,omitempty"`
 	// MaxRunTimeout is the maximum allowed timeout for /api/run commands. Default: "120s".
@@ -156,12 +160,14 @@ type WebTimeoutsConfig struct {
 // DefaultWebTimeoutsConfig returns a WebTimeoutsConfig with sensible defaults.
 func DefaultWebTimeoutsConfig() *WebTimeoutsConfig {
 	return &WebTimeoutsConfig{
-		CmdTimeout:        "15s",
-		GhCmdTimeout:      "10s",
-		TmuxCmdTimeout:    "2s",
-		FetchTimeout:      "8s",
-		DefaultRunTimeout: "30s",
-		MaxRunTimeout:     "120s",
+		CmdTimeout:           "15s",
+		GhCmdTimeout:         "10s",
+		TmuxCmdTimeout:       "2s",
+		FetchTimeout:         "8s",
+		DashboardCacheTTL:    "10s",
+		DashboardSSEInterval: "2s",
+		DefaultRunTimeout:    "30s",
+		MaxRunTimeout:        "120s",
 	}
 }
 

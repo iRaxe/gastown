@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/session"
 )
 
@@ -877,6 +878,60 @@ func TestAPIHandler_SSE_ContentType(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "event: connected") {
 		t.Error("SSE response should contain initial 'connected' event")
+	}
+}
+
+func TestNewDashboardMux_ConfiguresSSEInterval(t *testing.T) {
+	mux, err := NewDashboardMux(&MockConvoyFetcher{}, &config.WebTimeoutsConfig{
+		DashboardSSEInterval: "7s",
+	})
+	if err != nil {
+		t.Fatalf("NewDashboardMux() error = %v", err)
+	}
+
+	serveMux, ok := mux.(*http.ServeMux)
+	if !ok {
+		t.Fatalf("NewDashboardMux() = %T, want *http.ServeMux", mux)
+	}
+	handler, _ := serveMux.Handler(httptest.NewRequest(http.MethodGet, "/api/events", nil))
+	apiHandler, ok := handler.(*APIHandler)
+	if !ok {
+		t.Fatalf("api handler = %T, want *APIHandler", handler)
+	}
+
+	if apiHandler.sseInterval != 7*time.Second {
+		t.Errorf("sseInterval = %v, want 7s", apiHandler.sseInterval)
+	}
+}
+
+func TestNewDashboardMux_InvalidSSEIntervalUsesDefault(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"empty", ""},
+		{"invalid", "not-a-duration"},
+		{"zero", "0s"},
+		{"negative", "-1s"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux, err := NewDashboardMux(&MockConvoyFetcher{}, &config.WebTimeoutsConfig{
+				DashboardSSEInterval: tt.value,
+			})
+			if err != nil {
+				t.Fatalf("NewDashboardMux() error = %v", err)
+			}
+
+			serveMux := mux.(*http.ServeMux)
+			handler, _ := serveMux.Handler(httptest.NewRequest(http.MethodGet, "/api/events", nil))
+			apiHandler := handler.(*APIHandler)
+
+			if apiHandler.sseInterval != defaultSSEInterval {
+				t.Errorf("sseInterval = %v, want %v", apiHandler.sseInterval, defaultSSEInterval)
+			}
+		})
 	}
 }
 

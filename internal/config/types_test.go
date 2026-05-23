@@ -65,6 +65,8 @@ func TestDefaultWebTimeoutsConfig(t *testing.T) {
 		{"GhCmdTimeout", cfg.GhCmdTimeout, 0, 10 * time.Second},
 		{"TmuxCmdTimeout", cfg.TmuxCmdTimeout, 0, 2 * time.Second},
 		{"FetchTimeout", cfg.FetchTimeout, 0, 8 * time.Second},
+		{"DashboardCacheTTL", cfg.DashboardCacheTTL, 0, 10 * time.Second},
+		{"DashboardSSEInterval", cfg.DashboardSSEInterval, 0, 2 * time.Second},
 		{"DefaultRunTimeout", cfg.DefaultRunTimeout, 0, 30 * time.Second},
 		{"MaxRunTimeout", cfg.MaxRunTimeout, 0, 120 * time.Second},
 	}
@@ -136,12 +138,14 @@ func TestDefaultFeedCuratorConfig(t *testing.T) {
 func TestWebTimeoutsConfig_JSONRoundTrip(t *testing.T) {
 	t.Parallel()
 	original := &WebTimeoutsConfig{
-		CmdTimeout:        "20s",
-		GhCmdTimeout:      "15s",
-		TmuxCmdTimeout:    "3s",
-		FetchTimeout:      "12s",
-		DefaultRunTimeout: "45s",
-		MaxRunTimeout:     "90s",
+		CmdTimeout:           "20s",
+		GhCmdTimeout:         "15s",
+		TmuxCmdTimeout:       "3s",
+		FetchTimeout:         "12s",
+		DashboardCacheTTL:    "20s",
+		DashboardSSEInterval: "5s",
+		DefaultRunTimeout:    "45s",
+		MaxRunTimeout:        "90s",
 	}
 
 	data, err := json.Marshal(original)
@@ -320,12 +324,14 @@ func TestTownSettings_WithNewFields_RoundTrip(t *testing.T) {
 
 	original := NewTownSettings()
 	original.WebTimeouts = &WebTimeoutsConfig{
-		CmdTimeout:        "20s",
-		GhCmdTimeout:      "15s",
-		TmuxCmdTimeout:    "3s",
-		FetchTimeout:      "12s",
-		DefaultRunTimeout: "45s",
-		MaxRunTimeout:     "2m",
+		CmdTimeout:           "20s",
+		GhCmdTimeout:         "15s",
+		TmuxCmdTimeout:       "3s",
+		FetchTimeout:         "12s",
+		DashboardCacheTTL:    "20s",
+		DashboardSSEInterval: "5s",
+		DefaultRunTimeout:    "45s",
+		MaxRunTimeout:        "2m",
 	}
 	original.WorkerStatus = &WorkerStatusConfig{
 		StaleThreshold:          "10m",
@@ -363,6 +369,12 @@ func TestTownSettings_WithNewFields_RoundTrip(t *testing.T) {
 	}
 	if loaded.WebTimeouts.FetchTimeout != "12s" {
 		t.Errorf("FetchTimeout = %q, want %q", loaded.WebTimeouts.FetchTimeout, "12s")
+	}
+	if loaded.WebTimeouts.DashboardCacheTTL != "20s" {
+		t.Errorf("DashboardCacheTTL = %q, want %q", loaded.WebTimeouts.DashboardCacheTTL, "20s")
+	}
+	if loaded.WebTimeouts.DashboardSSEInterval != "5s" {
+		t.Errorf("DashboardSSEInterval = %q, want %q", loaded.WebTimeouts.DashboardSSEInterval, "5s")
 	}
 	if loaded.WebTimeouts.DefaultRunTimeout != "45s" {
 		t.Errorf("DefaultRunTimeout = %q, want %q", loaded.WebTimeouts.DefaultRunTimeout, "45s")
@@ -602,6 +614,8 @@ func TestParseDurationOrDefault_AllWebTimeoutDefaults(t *testing.T) {
 		{"GhCmdTimeout", empty.GhCmdTimeout, defaults.GhCmdTimeout, 10 * time.Second},
 		{"TmuxCmdTimeout", empty.TmuxCmdTimeout, defaults.TmuxCmdTimeout, 2 * time.Second},
 		{"FetchTimeout", empty.FetchTimeout, defaults.FetchTimeout, 8 * time.Second},
+		{"DashboardCacheTTL", empty.DashboardCacheTTL, defaults.DashboardCacheTTL, 10 * time.Second},
+		{"DashboardSSEInterval", empty.DashboardSSEInterval, defaults.DashboardSSEInterval, 2 * time.Second},
 		{"DefaultRunTimeout", empty.DefaultRunTimeout, defaults.DefaultRunTimeout, 30 * time.Second},
 		{"MaxRunTimeout", empty.MaxRunTimeout, defaults.MaxRunTimeout, 120 * time.Second},
 	}

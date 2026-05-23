@@ -70,6 +70,14 @@ type ConvoyHandler struct {
 // Requests arriving within this window get the cached response.
 const defaultCacheTTL = 10 * time.Second
 
+func dashboardDurationOrDefault(value string, fallback time.Duration) time.Duration {
+	duration := config.ParseDurationOrDefault(value, fallback)
+	if duration <= 0 {
+		return fallback
+	}
+	return duration
+}
+
 // NewConvoyHandler creates a new convoy handler with the given fetcher, fetch timeout, and CSRF token.
 func NewConvoyHandler(fetcher ConvoyFetcher, fetchTimeout time.Duration, csrfToken string) (*ConvoyHandler, error) {
 	tmpl, err := LoadTemplates()
@@ -468,10 +476,12 @@ func NewDashboardMux(fetcher ConvoyFetcher, webCfg *config.WebTimeoutsConfig) (h
 	if err != nil {
 		return nil, err
 	}
+	convoyHandler.cacheTTL = dashboardDurationOrDefault(webCfg.DashboardCacheTTL, defaultCacheTTL)
 
 	defaultRunTimeout := config.ParseDurationOrDefault(webCfg.DefaultRunTimeout, 30*time.Second)
 	maxRunTimeout := config.ParseDurationOrDefault(webCfg.MaxRunTimeout, 60*time.Second)
-	apiHandler := NewAPIHandler(defaultRunTimeout, maxRunTimeout, csrfToken)
+	sseInterval := dashboardDurationOrDefault(webCfg.DashboardSSEInterval, defaultSSEInterval)
+	apiHandler := newAPIHandlerWithSSEInterval(defaultRunTimeout, maxRunTimeout, csrfToken, sseInterval)
 
 	// Create static file server from embedded files
 	staticFS, err := fs.Sub(staticFiles, "static")

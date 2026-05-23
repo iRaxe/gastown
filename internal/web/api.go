@@ -56,6 +56,7 @@ type APIHandler struct {
 	// Configurable timeouts (from TownSettings.WebTimeouts)
 	defaultRunTimeout time.Duration
 	maxRunTimeout     time.Duration
+	sseInterval       time.Duration
 	// Options cache
 	optionsCache     *OptionsResponse
 	optionsCacheTime time.Time
@@ -68,14 +69,23 @@ type APIHandler struct {
 
 const optionsCacheTTL = 30 * time.Second
 
+const defaultSSEInterval = 2 * time.Second
+
 // maxConcurrentCommands limits how many gt subprocesses can run at once.
 // handleOptions alone spawns 7; allow headroom for other concurrent handlers.
 const maxConcurrentCommands = 12
 
 // NewAPIHandler creates a new API handler with the given run timeouts and CSRF token.
 func NewAPIHandler(defaultRunTimeout, maxRunTimeout time.Duration, csrfToken string) *APIHandler {
+	return newAPIHandlerWithSSEInterval(defaultRunTimeout, maxRunTimeout, csrfToken, defaultSSEInterval)
+}
+
+func newAPIHandlerWithSSEInterval(defaultRunTimeout, maxRunTimeout time.Duration, csrfToken string, sseInterval time.Duration) *APIHandler {
 	if csrfToken == "" {
 		log.Printf("WARNING: APIHandler created with empty CSRF token — POST requests will not be protected")
+	}
+	if sseInterval <= 0 {
+		sseInterval = defaultSSEInterval
 	}
 	// Use PATH lookup for gt binary. Do NOT use os.Executable() here - during
 	// tests it returns the test binary, causing fork bombs when executed.
@@ -85,6 +95,7 @@ func NewAPIHandler(defaultRunTimeout, maxRunTimeout time.Duration, csrfToken str
 		workDir:           workDir,
 		defaultRunTimeout: defaultRunTimeout,
 		maxRunTimeout:     maxRunTimeout,
+		sseInterval:       sseInterval,
 		cmdSem:            make(chan struct{}, maxConcurrentCommands),
 		csrfToken:         csrfToken,
 	}
@@ -2178,7 +2189,7 @@ func parseCommandArgs(command string) []string {
 }
 
 // handleSSE streams Server-Sent Events to the dashboard client.
-// It polls key dashboard state every 2 seconds and sends an event when
+// It polls key dashboard state at the configured interval and sends an event when
 // changes are detected, allowing the client to trigger a re-render.
 // Falls through gracefully if the client disconnects.
 func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
@@ -2200,7 +2211,11 @@ func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	var lastHash string
-	ticker := time.NewTicker(2 * time.Second)
+	sseInterval := h.sseInterval
+	if sseInterval <= 0 {
+		sseInterval = defaultSSEInterval
+	}
+	ticker := time.NewTicker(sseInterval)
 	defer ticker.Stop()
 
 	// Send keepalive comment every 15 seconds to prevent connection timeouts
