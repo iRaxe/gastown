@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -392,11 +393,14 @@ exit 0
 		formulaRunFiles = oldFiles
 		formulaRunAgent = oldAgent
 	})
-	var trackedTownRoot, trackedConvoyID, trackedIssueID string
+	type trackingCall struct {
+		townRoot string
+		convoyID string
+		issueID  string
+	}
+	var trackingCalls []trackingCall
 	addTrackingRelationFn = func(townRootArg, convoyID, issueID string) error {
-		trackedTownRoot = townRootArg
-		trackedConvoyID = convoyID
-		trackedIssueID = issueID
+		trackingCalls = append(trackingCalls, trackingCall{townRoot: townRootArg, convoyID: convoyID, issueID: issueID})
 		return nil
 	}
 	formulaRunPR = 0
@@ -415,11 +419,22 @@ exit 0
 
 	f := &formula.Formula{
 		Description: "routing convoy",
-		Legs: []formula.Leg{{
-			ID:          "one",
-			Title:       "Leg one",
-			Description: "Do one thing",
-		}},
+		Legs: []formula.Leg{
+			{
+				ID:          "one",
+				Title:       "Leg one",
+				Description: "Do one thing",
+			},
+			{
+				ID:          "two",
+				Title:       "Leg two",
+				Description: "Do another thing",
+			},
+		},
+		Synthesis: &formula.Synthesis{
+			Title:       "Synthesize routing findings",
+			Description: "Combine leg findings",
+		},
 	}
 	if err := executeConvoyFormula(f, "routing-fan", "gastown"); err != nil {
 		t.Fatalf("executeConvoyFormula: %v", err)
@@ -433,19 +448,85 @@ exit 0
 	if strings.Contains(logText, "--force") {
 		t.Fatalf("formula creates should not use --force for multi-hyphen IDs:\n%s", logText)
 	}
+	poisonedBeadsDir := filepath.Join(townRoot, "wrong", ".beads")
+	for _, line := range strings.Split(strings.TrimSpace(logText), "\n") {
+		if strings.Contains(line, "--allow-stale version") {
+			continue
+		}
+		if strings.Contains(line, poisonedBeadsDir) {
+			t.Fatalf("formula command leaked poisoned ambient BEADS_DIR:\n%s", logText)
+		}
+	}
 	if strings.Contains(logText, "--id=gt-cv-") {
 		t.Fatalf("formula convoy created rig-prefixed convoy in town log:\n%s", logText)
 	}
 	if !strings.Contains(logText, townBeads+"|"+townBeads+"|create ") || !strings.Contains(logText, "--id=hq-cv-") {
 		t.Fatalf("formula convoy create did not target town beads with hq-cv id:\n%s", logText)
 	}
-	if !strings.Contains(logText, rigBeads+"|"+rigBeads+"|create ") || !strings.Contains(logText, "--id=gt-leg-") {
-		t.Fatalf("formula leg create did not target rig beads with gt-leg id:\n%s", logText)
+	if strings.Count(logText, rigBeads+"|"+rigBeads+"|create ") != 3 {
+		t.Fatalf("formula should create two legs plus synthesis in rig beads:\n%s", logText)
 	}
-	if trackedTownRoot != townRoot {
-		t.Fatalf("tracking townRoot = %q, want %q", trackedTownRoot, townRoot)
+	if strings.Count(logText, "--id=gt-leg-") != 2 {
+		t.Fatalf("formula did not create two gt-leg beads in rig beads:\n%s", logText)
 	}
-	if !strings.HasPrefix(trackedConvoyID, "hq-cv-") || !strings.HasPrefix(trackedIssueID, "gt-leg-") {
-		t.Fatalf("tracking relation = (%q, %q), want hq-cv to gt-leg", trackedConvoyID, trackedIssueID)
+	if !strings.Contains(logText, "--id=gt-syn-") {
+		t.Fatalf("formula did not create gt-syn synthesis bead in rig beads:\n%s", logText)
+	}
+
+	var synthesisID string
+	legIDs := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(logText), "\n") {
+		_, args, ok := strings.Cut(line, "|")
+		if !ok {
+			continue
+		}
+		_, args, ok = strings.Cut(args, "|")
+		if !ok {
+			continue
+		}
+		for _, field := range strings.Fields(args) {
+			id, ok := strings.CutPrefix(field, "--id=")
+			if !ok {
+				continue
+			}
+			if strings.HasPrefix(id, "gt-leg-") {
+				legIDs[id] = true
+			}
+			if strings.HasPrefix(id, "gt-syn-") {
+				synthesisID = id
+			}
+		}
+	}
+	if len(legIDs) != 2 || synthesisID == "" {
+		t.Fatalf("failed to extract created leg/synthesis IDs from log:\n%s", logText)
+	}
+
+	for legID := range legIDs {
+		want := fmt.Sprintf("%s|%s|dep add %s %s", rigBeads, rigBeads, synthesisID, legID)
+		if !strings.Contains(logText, want) {
+			t.Fatalf("synthesis dependency missing %q in log:\n%s", want, logText)
+		}
+	}
+
+	if len(trackingCalls) != 3 {
+		t.Fatalf("tracking calls = %d, want 3: %#v", len(trackingCalls), trackingCalls)
+	}
+	trackedIDs := make(map[string]bool)
+	for _, call := range trackingCalls {
+		if call.townRoot != townRoot {
+			t.Fatalf("tracking townRoot = %q, want %q", call.townRoot, townRoot)
+		}
+		if !strings.HasPrefix(call.convoyID, "hq-cv-") {
+			t.Fatalf("tracking convoyID = %q, want hq-cv-*", call.convoyID)
+		}
+		trackedIDs[call.issueID] = true
+	}
+	for legID := range legIDs {
+		if !trackedIDs[legID] {
+			t.Fatalf("missing tracking relation for leg %s in %#v", legID, trackingCalls)
+		}
+	}
+	if !trackedIDs[synthesisID] {
+		t.Fatalf("missing tracking relation for synthesis %s in %#v", synthesisID, trackingCalls)
 	}
 }
