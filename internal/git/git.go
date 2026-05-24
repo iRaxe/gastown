@@ -65,6 +65,10 @@ type Git struct {
 	gitDir  string // Optional: explicit git directory (for bare repos)
 }
 
+// ErrUnsafeTownRootGitMutation is returned when a mutating git operation would
+// act on the Gas Town town-root repository or town-root runtime paths.
+var ErrUnsafeTownRootGitMutation = errors.New("unsafe git mutation targets Gas Town town root")
+
 // NewGit creates a new Git wrapper for the given directory.
 func NewGit(workDir string) *Git {
 	return &Git{workDir: workDir}
@@ -90,6 +94,10 @@ func (g *Git) IsRepo() bool {
 
 // run executes a git command and returns stdout.
 func (g *Git) run(args ...string) (string, error) {
+	if err := g.guardUnsafeTownRootMutation(args); err != nil {
+		return "", err
+	}
+
 	// If gitDir is set (bare repo), prepend --git-dir flag
 	if g.gitDir != "" {
 		args = append([]string{"--git-dir=" + g.gitDir}, args...)
@@ -121,6 +129,10 @@ const pushTimeout = 60 * time.Second
 // runWithTimeout executes a git command with a deadline. If the command does
 // not finish within the timeout, the process is killed and an error is returned.
 func (g *Git) runWithTimeout(timeout time.Duration, args ...string) (_ string, _ error) { //nolint:unparam // string return kept for consistency with Run()
+	if err := g.guardUnsafeTownRootMutation(args); err != nil {
+		return "", err
+	}
+
 	if g.gitDir != "" {
 		args = append([]string{"--git-dir=" + g.gitDir}, args...)
 	}
@@ -157,6 +169,10 @@ func (g *Git) runWithEnv(args []string, extraEnv []string) (_ string, _ error) {
 // runWithEnvAndTimeout executes a git command with extra env vars and an
 // optional timeout. Pass 0 for no timeout.
 func (g *Git) runWithEnvAndTimeout(args []string, extraEnv []string, timeout time.Duration) (_ string, _ error) {
+	if err := g.guardUnsafeTownRootMutation(args); err != nil {
+		return "", err
+	}
+
 	if g.gitDir != "" {
 		args = append([]string{"--git-dir=" + g.gitDir}, args...)
 	}
@@ -195,6 +211,268 @@ func (g *Git) runWithEnvAndTimeout(args []string, extraEnv []string, timeout tim
 		return "", g.wrapError(err, stdout.String(), stderr.String(), args)
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+func (g *Git) guardUnsafeTownRootMutation(args []string) error {
+	cmd, rest := gitSubcommand(args)
+	if cmd == "" {
+		return nil
+	}
+
+	if gitSubcommandMutatesWorktree(cmd, rest) {
+		if err := EnsureSafeMutationWorkDir(g.workDir); err != nil {
+			return fmt.Errorf("%w: git %s", err, strings.Join(args, " "))
+		}
+	}
+
+	for _, target := range protectedWorktreeTargets(cmd, rest, g.workDir) {
+		return fmt.Errorf("%w: git worktree target %s", ErrUnsafeTownRootGitMutation, target)
+	}
+
+	return nil
+}
+
+// EnsureSafeMutationWorkDir fails when workDir's effective git worktree is the
+// Gas Town town root. Raw git callsites use this before mutating commands.
+func EnsureSafeMutationWorkDir(workDir string) error {
+	if workDir == "" {
+		return nil
+	}
+
+	topLevel, ok := gitTopLevel(workDir)
+	if !ok {
+		return nil
+	}
+	if isTownRoot(topLevel) {
+		return fmt.Errorf("%w: %s resolves to town root git worktree %s", ErrUnsafeTownRootGitMutation, workDir, topLevel)
+	}
+	return nil
+}
+
+func gitTopLevel(workDir string) (string, bool) {
+	cmd := exec.Command("git", "-C", workDir, "rev-parse", "--show-toplevel")
+	util.SetDetachedProcessGroup(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	topLevel := strings.TrimSpace(string(out))
+	if topLevel == "" {
+		return "", false
+	}
+	abs, err := filepath.Abs(topLevel)
+	if err != nil {
+		return filepath.Clean(topLevel), true
+	}
+	return filepath.Clean(abs), true
+}
+
+func isTownRoot(path string) bool {
+	return fileExists(filepath.Join(path, "mayor", "town.json")) || fileExists(filepath.Join(path, "mayor", "rigs.json"))
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func gitSubcommand(args []string) (string, []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-C" || arg == "-c" || arg == "--git-dir" || arg == "--work-tree" || arg == "--namespace" || arg == "--config-env" || arg == "--exec-path":
+			i++
+			continue
+		case strings.HasPrefix(arg, "--git-dir=") || strings.HasPrefix(arg, "--work-tree=") || strings.HasPrefix(arg, "--namespace=") || strings.HasPrefix(arg, "--config-env=") || strings.HasPrefix(arg, "--exec-path="):
+			continue
+		case arg == "--no-pager" || arg == "--bare" || arg == "--literal-pathspecs" || arg == "--no-replace-objects":
+			continue
+		case strings.HasPrefix(arg, "-"):
+			continue
+		default:
+			return arg, args[i+1:]
+		}
+	}
+	return "", nil
+}
+
+func gitSubcommandMutatesWorktree(cmd string, args []string) bool {
+	switch cmd {
+	case "checkout", "switch", "restore", "reset", "clean", "merge", "rebase", "pull", "rm", "stash", "cherry-pick", "revert", "am", "sparse-checkout":
+		return true
+	case "branch":
+		return branchArgsMutate(args)
+	case "worktree":
+		return worktreeArgsMutate(args)
+	case "symbolic-ref":
+		return symbolicRefArgsMutate(args)
+	case "update-ref":
+		return true
+	default:
+		return false
+	}
+}
+
+func branchArgsMutate(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	readOnly := false
+	for _, arg := range args {
+		switch arg {
+		case "--show-current", "--list", "-l", "-r", "-a", "--contains", "--merged", "--no-merged", "--points-at":
+			readOnly = true
+		case "-d", "-D", "-f", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream", "--track":
+			return true
+		}
+		if strings.HasPrefix(arg, "--format") {
+			readOnly = true
+		}
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return !readOnly
+	}
+	return false
+}
+
+func worktreeArgsMutate(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "add", "remove", "move", "prune":
+		return true
+	default:
+		return false
+	}
+}
+
+func symbolicRefArgsMutate(args []string) bool {
+	nonOptions := 0
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			nonOptions++
+		}
+	}
+	return nonOptions > 1
+}
+
+func protectedWorktreeTargets(cmd string, args []string, baseDir string) []string {
+	if cmd != "worktree" || len(args) == 0 {
+		return nil
+	}
+
+	var targets []string
+	switch args[0] {
+	case "add":
+		if target := firstWorktreeAddTarget(args[1:]); target != "" {
+			targets = append(targets, target)
+		}
+	case "remove":
+		if target := firstNonOptionPath(args[1:], nil); target != "" {
+			targets = append(targets, target)
+		}
+	case "move":
+		targets = append(targets, nonOptionPaths(args[1:], nil, 2)...)
+	}
+
+	protected := make([]string, 0, len(targets))
+	for _, target := range targets {
+		abs := gitPathAbs(target, baseDir)
+		if _, ok := protectedTownRuntimePath(abs); ok {
+			protected = append(protected, abs)
+		}
+	}
+	return protected
+}
+
+func firstWorktreeAddTarget(args []string) string {
+	valueOptions := map[string]bool{"-b": true, "-B": true, "--orphan": true, "--reason": true}
+	return firstNonOptionPath(args, valueOptions)
+}
+
+func firstNonOptionPath(args []string, valueOptions map[string]bool) string {
+	paths := nonOptionPaths(args, valueOptions, 1)
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
+func nonOptionPaths(args []string, valueOptions map[string]bool, limit int) []string {
+	paths := make([]string, 0, limit)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if valueOptions[arg] {
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--reason=") || strings.HasPrefix(arg, "--orphan=") {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		paths = append(paths, arg)
+		if len(paths) == limit {
+			return paths
+		}
+	}
+	return paths
+}
+
+func gitPathAbs(path, baseDir string) string {
+	if baseDir == "" {
+		baseDir = "."
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(baseDir, path)
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(abs)
+}
+
+func protectedTownRuntimePath(path string) (string, bool) {
+	abs := filepath.Clean(path)
+	for dir := abs; ; dir = filepath.Dir(dir) {
+		if isTownRoot(dir) {
+			if samePath(abs, dir) {
+				return dir, true
+			}
+			rel, err := filepath.Rel(dir, abs)
+			if err != nil {
+				return "", false
+			}
+			first := rel
+			if idx := strings.IndexRune(rel, filepath.Separator); idx >= 0 {
+				first = rel[:idx]
+			}
+			switch first {
+			case "mayor", ".dolt-data", ".runtime", ".beads", "daemon":
+				return dir, true
+			default:
+				return "", false
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+	}
+}
+
+func samePath(a, b string) bool {
+	rel, err := filepath.Rel(a, b)
+	return err == nil && rel == "."
 }
 
 // wrapError wraps git errors with context.
@@ -1308,6 +1586,10 @@ func (g *Git) CheckConflicts(source, target string) ([]string, error) {
 // runMergeCheck runs a git merge command and returns error info from both stdout and stderr.
 // ZFC: Returns GitError with raw output for agent observation.
 func (g *Git) runMergeCheck(args ...string) (string, error) {
+	if err := g.guardUnsafeTownRootMutation(args); err != nil {
+		return "", err
+	}
+
 	cmd := exec.Command("git", args...)
 	util.SetDetachedProcessGroup(cmd)
 	cmd.Dir = g.workDir

@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -41,6 +42,178 @@ func initTestRepo(t *testing.T) string {
 	_ = cmd.Run()
 
 	return dir
+}
+
+type townRootSafetySnapshot struct {
+	Head   string
+	Branch string
+	Files  map[string]string
+}
+
+func initTownRootSafetyRepo(t *testing.T) string {
+	t.Helper()
+
+	root := initTestRepo(t)
+	g := NewGit(root)
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("committed\n"), 0644); err != nil {
+		t.Fatalf("write tracked file: %v", err)
+	}
+	if err := g.Add("tracked.txt"); err != nil {
+		t.Fatalf("git add tracked: %v", err)
+	}
+	if err := g.Commit("add tracked file"); err != nil {
+		t.Fatalf("git commit tracked: %v", err)
+	}
+	cmd := exec.Command("git", "branch", "polecat/safety")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create safety branch: %v\n%s", err, out)
+	}
+
+	writeTownSafetyFile(t, root, "mayor/town.json", `{"name":"test-town"}\n`)
+	writeTownSafetyFile(t, root, "mayor/rigs.json", `{"rigs":[]}\n`)
+	writeTownSafetyFile(t, root, ".dolt-data/gastown/.dolt/noms/manifest", "manifest sentinel\n")
+	writeTownSafetyFile(t, root, ".runtime/sentinel", "runtime sentinel\n")
+	writeTownSafetyFile(t, root, ".beads/metadata.json", `{"prefix":"hq"}\n`)
+	writeTownSafetyFile(t, root, "daemon/daemon.pid", "12345\n")
+	writeTownSafetyFile(t, root, "user-work.txt", "untracked user work\n")
+	writeTownSafetyFile(t, root, "tracked.txt", "dirty tracked work\n")
+
+	return root
+}
+
+func writeTownSafetyFile(t *testing.T, root, rel, contents string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+func snapshotTownRootSafety(t *testing.T, root string) townRootSafetySnapshot {
+	t.Helper()
+	g := NewGit(root)
+	head, err := g.Rev("HEAD")
+	if err != nil {
+		t.Fatalf("rev HEAD: %v", err)
+	}
+	branch, err := g.CurrentBranch()
+	if err != nil {
+		t.Fatalf("current branch: %v", err)
+	}
+	s := townRootSafetySnapshot{
+		Head:   head,
+		Branch: branch,
+		Files:  make(map[string]string),
+	}
+	for _, rel := range townRootSafetyFiles() {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		s.Files[rel] = string(contents)
+	}
+	return s
+}
+
+func townRootSafetyFiles() []string {
+	return []string{
+		"mayor/town.json",
+		"mayor/rigs.json",
+		".dolt-data/gastown/.dolt/noms/manifest",
+		".runtime/sentinel",
+		".beads/metadata.json",
+		"daemon/daemon.pid",
+		"user-work.txt",
+		"tracked.txt",
+	}
+}
+
+func assertTownRootSafetyPreserved(t *testing.T, root string, before townRootSafetySnapshot) {
+	t.Helper()
+	after := snapshotTownRootSafety(t, root)
+	if after.Head != before.Head {
+		t.Fatalf("HEAD changed: got %s, want %s", after.Head, before.Head)
+	}
+	if after.Branch != before.Branch {
+		t.Fatalf("branch changed: got %s, want %s", after.Branch, before.Branch)
+	}
+	for rel, want := range before.Files {
+		if got := after.Files[rel]; got != want {
+			t.Fatalf("%s changed: got %q, want %q", rel, got, want)
+		}
+	}
+}
+
+func requireTownRootSafetyError(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrUnsafeTownRootGitMutation) {
+		t.Fatalf("error = %v, want ErrUnsafeTownRootGitMutation", err)
+	}
+}
+
+func TestTownRootMutatingGitCommandsAreBlocked(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*Git) error
+	}{
+		{name: "checkout", run: func(g *Git) error { return g.Checkout("polecat/safety") }},
+		{name: "checkout new branch", run: func(g *Git) error { return g.CheckoutNewBranch("polecat/new", "HEAD") }},
+		{name: "checkout reset branch", run: func(g *Git) error { return g.CheckoutResetBranch("polecat/reset", "HEAD") }},
+		{name: "reset hard", run: func(g *Git) error { return g.ResetHard("HEAD") }},
+		{name: "clean force", run: func(g *Git) error { return g.CleanForce() }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := initTownRootSafetyRepo(t)
+			before := snapshotTownRootSafety(t, root)
+			err := tt.run(NewGit(root))
+			requireTownRootSafetyError(t, err)
+			assertTownRootSafetyPreserved(t, root, before)
+		})
+	}
+}
+
+func TestNestedWorkDirResolvingToTownRootGitIsBlocked(t *testing.T) {
+	root := initTownRootSafetyRepo(t)
+	rigDir := filepath.Join(root, "gastown")
+	if err := os.MkdirAll(rigDir, 0755); err != nil {
+		t.Fatalf("mkdir rig dir: %v", err)
+	}
+	cmd := exec.Command("git", "-C", rigDir, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("raw git top-level: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != root {
+		t.Fatalf("raw git top-level = %q, want %q", got, root)
+	}
+
+	before := snapshotTownRootSafety(t, root)
+	err = NewGit(rigDir).ResetHard("HEAD")
+	requireTownRootSafetyError(t, err)
+	assertTownRootSafetyPreserved(t, root, before)
+}
+
+func TestWorktreeAddCannotTargetTownRootRuntimePaths(t *testing.T) {
+	root := initTownRootSafetyRepo(t)
+	before := snapshotTownRootSafety(t, root)
+
+	src := initTestRepo(t)
+	bareDir := filepath.Join(t.TempDir(), ".repo.git")
+	cmd := exec.Command("git", "clone", "--bare", src, bareDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("clone bare: %v\n%s", err, out)
+	}
+
+	err := NewGitWithDir(bareDir, "").WorktreeAddFromRef(root, "polecat/town-root", "HEAD")
+	requireTownRootSafetyError(t, err)
+	assertTownRootSafetyPreserved(t, root, before)
 }
 
 func TestIsRepo(t *testing.T) {

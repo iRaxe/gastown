@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -80,6 +82,81 @@ func TestCleanupLegacySocketSessionsRunsOnce(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("cleanup calls after second invocation = %d, want 1", calls)
 	}
+}
+
+func TestSyncWorkspaceRefusesTownRootWorkDir(t *testing.T) {
+	townRoot := t.TempDir()
+	cmd := exec.Command("git", "init")
+	cmd.Dir = townRoot
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	for _, args := range [][]string{{"config", "user.email", "test@test.com"}, {"config", "user.name", "Test User"}} {
+		cmd = exec.Command("git", args...)
+		cmd.Dir = townRoot
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "README.md"), []byte("# Town\n"), 0644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	cmd = exec.Command("git", "add", "README.md")
+	cmd.Dir = townRoot
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	cmd = exec.Command("git", "commit", "-m", "initial")
+	cmd.Dir = townRoot
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+
+	writeDaemonTownFile(t, townRoot, "mayor/town.json", `{"name":"test-town"}\n`)
+	writeDaemonTownFile(t, townRoot, "mayor/rigs.json", `{"rigs":[]}\n`)
+	writeDaemonTownFile(t, townRoot, ".dolt-data/gastown/.dolt/noms/manifest", "manifest\n")
+
+	headBefore := daemonGitOutput(t, townRoot, "rev-parse", "HEAD")
+	var logBuf bytes.Buffer
+	d := &Daemon{
+		config: DefaultConfig(townRoot),
+		logger: log.New(&logBuf, "", 0),
+	}
+	d.syncWorkspace(townRoot)
+
+	if !strings.Contains(logBuf.String(), "refusing daemon git sync") {
+		t.Fatalf("log = %q, want refusal", logBuf.String())
+	}
+	if got := daemonGitOutput(t, townRoot, "rev-parse", "HEAD"); got != headBefore {
+		t.Fatalf("HEAD changed: got %s, want %s", got, headBefore)
+	}
+	for _, rel := range []string{"mayor/town.json", "mayor/rigs.json", ".dolt-data/gastown/.dolt/noms/manifest"} {
+		if _, err := os.Stat(filepath.Join(townRoot, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("%s not preserved: %v", rel, err)
+		}
+	}
+}
+
+func writeDaemonTownFile(t *testing.T, root, rel, contents string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+func daemonGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func TestStateFile(t *testing.T) {
