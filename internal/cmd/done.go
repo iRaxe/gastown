@@ -284,8 +284,15 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	}
 	if cwdAvailable && cleanupStatusExplicit && parseCleanupStatus(doneCleanupStatus) == polecat.CleanupClean {
 		workStatus, err := g.CheckUncommittedWork()
-		if err == nil && (workStatus.StashCount > 0 || workStatus.UnpushedCommits > 0 || (workStatus.HasUncommittedChanges && !workStatus.CleanExcludingRuntime())) {
+		if err == nil && (workStatus.StashCount > 0 || (workStatus.HasUncommittedChanges && !workStatus.CleanExcludingRuntime())) {
 			return fmt.Errorf("--cleanup-status=clean conflicts with current git state: %s", workStatus.String())
+		}
+		pushed, unpushedCount, pushErr := g.BranchPushedToRemote(branch, "origin")
+		if pushErr != nil || !pushed || unpushedCount > 0 {
+			if pushErr != nil {
+				return fmt.Errorf("--cleanup-status=clean cannot verify pushed branch state: %w", pushErr)
+			}
+			return fmt.Errorf("--cleanup-status=clean conflicts with unpushed branch state: %d unpushed commit(s)", unpushedCount)
 		}
 	}
 
