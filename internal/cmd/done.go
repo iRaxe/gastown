@@ -98,6 +98,16 @@ func init() {
 	rootCmd.AddCommand(doneCmd)
 }
 
+func cleanupStatusFromWorkStatus(workStatus *git.UncommittedWorkStatus) string {
+	if workStatus.HasUncommittedChanges && !workStatus.CleanExcludingRuntime() {
+		return "uncommitted"
+	}
+	if workStatus.StashCount > 0 {
+		return "stash"
+	}
+	return ""
+}
+
 func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	defer func() { telemetry.RecordDone(context.Background(), strings.ToUpper(doneStatus), retErr) }()
 	// Guard: Only polecats should call gt done
@@ -260,12 +270,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			if err != nil {
 				style.PrintWarning("could not auto-detect cleanup status: %v", err)
 			} else {
-				switch {
-				case workStatus.HasUncommittedChanges:
-					doneCleanupStatus = "uncommitted"
-				case workStatus.StashCount > 0:
-					doneCleanupStatus = "stash"
-				default:
+				if detected := cleanupStatusFromWorkStatus(workStatus); detected != "" {
+					doneCleanupStatus = detected
+				} else {
 					// CheckUncommittedWork.UnpushedCommits doesn't work for branches
 					// without upstream tracking (common for polecats). Use the more
 					// robust BranchPushedToRemote which compares against origin/main.

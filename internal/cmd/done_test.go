@@ -81,6 +81,52 @@ func TestDoneUsesResolveBeadsDir(t *testing.T) {
 	})
 }
 
+func TestCleanupStatusFromWorkStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		work *gitpkg.UncommittedWorkStatus
+		want string
+	}{
+		{
+			name: "runtime only dirt does not self report uncommitted",
+			work: &gitpkg.UncommittedWorkStatus{
+				HasUncommittedChanges: true,
+				UntrackedFiles:        []string{".opencode/plugins/gastown.js"},
+			},
+		},
+		{
+			name: "real dirt reports uncommitted",
+			work: &gitpkg.UncommittedWorkStatus{
+				HasUncommittedChanges: true,
+				ModifiedFiles:         []string{"internal/git/git.go"},
+			},
+			want: "uncommitted",
+		},
+		{
+			name: "source side runtime copy reports uncommitted",
+			work: &gitpkg.UncommittedWorkStatus{
+				HasUncommittedChanges: true,
+				UntrackedFiles:        []string{".opencode/plugins/gastown.js"},
+				SourceFiles:           []string{"README.md"},
+			},
+			want: "uncommitted",
+		},
+		{
+			name: "stash reports stash",
+			work: &gitpkg.UncommittedWorkStatus{StashCount: 1},
+			want: "stash",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cleanupStatusFromWorkStatus(tt.work); got != tt.want {
+				t.Fatalf("cleanupStatusFromWorkStatus() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestForceCloseIssueWithRetryClosesNoMergeIssue(t *testing.T) {
 	var gotReason string
 	var gotIDs []string
