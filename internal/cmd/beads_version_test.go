@@ -13,8 +13,6 @@ func resetBeadsVersionCheckForTest(t *testing.T, fn func() (deps.BeadsStatus, st
 	t.Helper()
 
 	origCheckBeads := checkBeads
-	origResult := cachedVersionCheckResult
-	origOnce := versionCheckOnce
 
 	checkBeads = fn
 	cachedVersionCheckResult = nil
@@ -22,8 +20,8 @@ func resetBeadsVersionCheckForTest(t *testing.T, fn func() (deps.BeadsStatus, st
 
 	t.Cleanup(func() {
 		checkBeads = origCheckBeads
-		cachedVersionCheckResult = origResult
-		versionCheckOnce = origOnce
+		cachedVersionCheckResult = nil
+		versionCheckOnce = sync.Once{}
 	})
 }
 
@@ -66,7 +64,7 @@ func TestPersistentPreRunFailsForBdAboveSupportedMaximum(t *testing.T) {
 		return deps.BeadsTooNew, "1.0.5"
 	})
 
-	for _, use := range []string{"ready", "version", "prime"} {
+	for _, use := range []string{"ready"} {
 		t.Run(use, func(t *testing.T) {
 			err := persistentPreRun(&cobra.Command{Use: use}, nil)
 			if err == nil {
@@ -76,6 +74,44 @@ func TestPersistentPreRunFailsForBdAboveSupportedMaximum(t *testing.T) {
 				t.Fatalf("persistentPreRun returned non-fatal beads error marker: %v", err)
 			}
 		})
+	}
+}
+
+func TestPersistentPreRunAllowsBeadsExemptCommandsWithBdAboveSupportedMaximum(t *testing.T) {
+	for _, use := range []string{"version", "prime", "install", "doctor", "health", "config"} {
+		t.Run(use, func(t *testing.T) {
+			called := false
+			resetBeadsVersionCheckForTest(t, func() (deps.BeadsStatus, string) {
+				called = true
+				return deps.BeadsTooNew, "1.0.5"
+			})
+
+			if err := persistentPreRun(&cobra.Command{Use: use}, nil); err != nil {
+				t.Fatalf("persistentPreRun(%s): %v", use, err)
+			}
+			if called {
+				t.Fatalf("%s should not run bd version checks", use)
+			}
+		})
+	}
+}
+
+func TestPersistentPreRunAllowsRoleCommandsWithBdAboveSupportedMaximum(t *testing.T) {
+	called := false
+	resetBeadsVersionCheckForTest(t, func() (deps.BeadsStatus, string) {
+		called = true
+		return deps.BeadsTooNew, "1.0.5"
+	})
+
+	roleCmd := &cobra.Command{Use: "role"}
+	childCmd := &cobra.Command{Use: "inspect"}
+	roleCmd.AddCommand(childCmd)
+
+	if err := persistentPreRun(childCmd, nil); err != nil {
+		t.Fatalf("persistentPreRun(role inspect): %v", err)
+	}
+	if called {
+		t.Fatal("role commands should not run bd version checks")
 	}
 }
 

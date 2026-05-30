@@ -141,6 +141,7 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 
 	beadsExempt := isCommandOrAncestorExempt(cmd, beadsExemptCommands)
 	branchExempt := isCommandOrAncestorExempt(cmd, branchCheckExemptCommands)
+	roleCommand := isRoleCommand(cmd)
 
 	// Check for stale binary (warning only, doesn't block)
 	if !beadsExempt {
@@ -159,7 +160,7 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 	touchPolecatHeartbeat()
 
 	var beadsVersionErr error
-	if !isCommandOrAncestorExempt(cmd, beadsTooNewExemptCommands) {
+	if !beadsExempt && !roleCommand && !isCommandOrAncestorExempt(cmd, beadsTooNewExemptCommands) {
 		beadsVersionErr = CheckBeadsVersion()
 		if isUnsupportedNewBeadsVersion(beadsVersionErr) {
 			return beadsVersionErr
@@ -167,7 +168,7 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// Skip warning-only beads checks for exempt commands.
-	if beadsExempt || isRoleCommand(cmd) {
+	if beadsExempt || roleCommand {
 		return nil
 	}
 

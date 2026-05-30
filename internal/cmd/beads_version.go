@@ -16,9 +16,8 @@ var (
 )
 
 type beadsVersionError struct {
-	status  deps.BeadsStatus
-	version string
-	err     error
+	status deps.BeadsStatus
+	err    error
 }
 
 func (e *beadsVersionError) Error() string {
@@ -55,15 +54,13 @@ func CheckBeadsVersion() error {
 			}
 		case deps.BeadsTooOld:
 			cachedVersionCheckResult = &beadsVersionError{
-				status:  status,
-				version: version,
+				status: status,
 				err: fmt.Errorf("beads %s is required, but %s is installed\n\nUpgrade: go install %s",
 					deps.MinBeadsVersion, version, deps.BeadsInstallPath),
 			}
 		case deps.BeadsTooNew:
 			cachedVersionCheckResult = &beadsVersionError{
-				status:  status,
-				version: version,
+				status: status,
 				err: fmt.Errorf("beads %s is installed, but this Gas Town release supports at most %s\n\nDowngrade: go install %s",
 					version, deps.MaxBeadsVersion, deps.BeadsInstallPath),
 			}
