@@ -643,7 +643,7 @@ func normalizeHookShowTarget(target string) string {
 	// This handles the case where the session name roundtrip fails due to
 	// uninitialized prefix registry. See GH#2371.
 	parts := strings.Split(target, "/")
-	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+	if len(parts) == 2 && safeAgentPathSegment(parts[0]) && safeAgentPathSegment(parts[1]) {
 		name := parts[1]
 		// Check for known roles — don't expand those
 		switch strings.ToLower(name) {
