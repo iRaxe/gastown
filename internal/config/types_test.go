@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -124,6 +125,34 @@ func TestWebTimeoutsConfig_WithDefaults(t *testing.T) {
 		_ = partial.WithDefaults()
 		if partial.MaxRunTimeout != "" {
 			t.Errorf("receiver mutated: MaxRunTimeout = %q, want empty", partial.MaxRunTimeout)
+		}
+	})
+
+	// Reflection guard against the drift this fix addresses: a field added to
+	// WebTimeoutsConfig and DefaultWebTimeoutsConfig but forgotten in
+	// WithDefaults would leave the zero value here, silently dropping the
+	// documented default for a partial config — the exact 60s/120s regression
+	// this change fixes. Every field is a duration string, so "filled" means
+	// non-empty and equal to the canonical default.
+	t.Run("every field is defaulted from an empty config", func(t *testing.T) {
+		got := reflect.ValueOf((&WebTimeoutsConfig{}).WithDefaults()).Elem()
+		defaults := reflect.ValueOf(DefaultWebTimeoutsConfig()).Elem()
+		typ := got.Type()
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			if field.Type.Kind() != reflect.String {
+				t.Errorf("field %s is %s, not string; extend this guard to cover its default",
+					field.Name, field.Type.Kind())
+				continue
+			}
+			gotVal := got.Field(i).String()
+			wantVal := defaults.Field(i).String()
+			if gotVal == "" {
+				t.Errorf("WithDefaults() left %s empty; add it to WithDefaults()", field.Name)
+			}
+			if gotVal != wantVal {
+				t.Errorf("WithDefaults() %s = %q, want default %q", field.Name, gotVal, wantVal)
+			}
 		}
 	})
 }
