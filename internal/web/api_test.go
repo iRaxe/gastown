@@ -935,6 +935,35 @@ func TestNewDashboardMux_InvalidSSEIntervalUsesDefault(t *testing.T) {
 	}
 }
 
+// TestNewDashboardMux_PartialConfigPreservesMaxRunTimeout guards the regression
+// where a web_timeouts block that set only the new dashboard pacing knobs
+// silently dropped the documented 120s /api/run max timeout to a lower fallback.
+func TestNewDashboardMux_PartialConfigPreservesMaxRunTimeout(t *testing.T) {
+	mux, err := NewDashboardMux(&MockConvoyFetcher{}, &config.WebTimeoutsConfig{
+		DashboardCacheTTL:    "10s",
+		DashboardSSEInterval: "2s",
+	})
+	if err != nil {
+		t.Fatalf("NewDashboardMux() error = %v", err)
+	}
+
+	serveMux, ok := mux.(*http.ServeMux)
+	if !ok {
+		t.Fatalf("NewDashboardMux() = %T, want *http.ServeMux", mux)
+	}
+	handler, _ := serveMux.Handler(httptest.NewRequest(http.MethodGet, "/api/run", nil))
+	apiHandler, ok := handler.(*APIHandler)
+	if !ok {
+		t.Fatalf("api handler = %T, want *APIHandler", handler)
+	}
+
+	want := 120 * time.Second
+	if apiHandler.maxRunTimeout != want {
+		t.Errorf("maxRunTimeout = %v, want %v (documented default must survive a partial config)",
+			apiHandler.maxRunTimeout, want)
+	}
+}
+
 // TestOptionsCacheConcurrentAccess verifies that concurrent cache reads and
 // writes don't race. The read lock is held through serialization so a
 // concurrent writer can't replace the cached pointer mid-encode.

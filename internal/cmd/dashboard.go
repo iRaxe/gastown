@@ -81,10 +81,12 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("creating convoy fetcher: %w", fetchErr)
 		}
 
-		// Load web timeouts config (nil-safe: NewDashboardMux applies defaults)
+		// Load web timeouts config. A partial web_timeouts block inherits the
+		// documented default for every field it omits (WithDefaults), so the
+		// max-run write timeout below and NewDashboardMux stay consistent.
 		if ts, loadErr := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot)); loadErr == nil {
 			if ts.WebTimeouts != nil {
-				webCfg = ts.WebTimeouts
+				webCfg = ts.WebTimeouts.WithDefaults()
 			}
 		} else {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: loading town settings: %v (using defaults)\n", loadErr)

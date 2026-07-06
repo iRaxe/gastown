@@ -171,6 +171,45 @@ func DefaultWebTimeoutsConfig() *WebTimeoutsConfig {
 	}
 }
 
+// WithDefaults returns a copy of the config with any unset (empty) field filled
+// from DefaultWebTimeoutsConfig. A nil receiver yields the full defaults. This
+// lets a partial web_timeouts block — for example one that sets only the
+// dashboard pacing knobs — inherit the documented default for every field it
+// omits instead of silently dropping it (e.g. the 120s /api/run max timeout).
+// The receiver is never mutated.
+func (c *WebTimeoutsConfig) WithDefaults() *WebTimeoutsConfig {
+	defaults := DefaultWebTimeoutsConfig()
+	if c == nil {
+		return defaults
+	}
+	merged := *c
+	if merged.CmdTimeout == "" {
+		merged.CmdTimeout = defaults.CmdTimeout
+	}
+	if merged.GhCmdTimeout == "" {
+		merged.GhCmdTimeout = defaults.GhCmdTimeout
+	}
+	if merged.TmuxCmdTimeout == "" {
+		merged.TmuxCmdTimeout = defaults.TmuxCmdTimeout
+	}
+	if merged.FetchTimeout == "" {
+		merged.FetchTimeout = defaults.FetchTimeout
+	}
+	if merged.DashboardCacheTTL == "" {
+		merged.DashboardCacheTTL = defaults.DashboardCacheTTL
+	}
+	if merged.DashboardSSEInterval == "" {
+		merged.DashboardSSEInterval = defaults.DashboardSSEInterval
+	}
+	if merged.DefaultRunTimeout == "" {
+		merged.DefaultRunTimeout = defaults.DefaultRunTimeout
+	}
+	if merged.MaxRunTimeout == "" {
+		merged.MaxRunTimeout = defaults.MaxRunTimeout
+	}
+	return &merged
+}
+
 // WorkerStatusConfig configures activity-age thresholds for worker status classification.
 type WorkerStatusConfig struct {
 	// StaleThreshold is the activity age after which a worker is considered "stale".

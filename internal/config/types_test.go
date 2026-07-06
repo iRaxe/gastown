@@ -82,6 +82,52 @@ func TestDefaultWebTimeoutsConfig(t *testing.T) {
 	}
 }
 
+func TestWebTimeoutsConfig_WithDefaults(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil receiver yields full defaults", func(t *testing.T) {
+		got := (*WebTimeoutsConfig)(nil).WithDefaults()
+		if *got != *DefaultWebTimeoutsConfig() {
+			t.Errorf("nil.WithDefaults() = %+v, want %+v", got, DefaultWebTimeoutsConfig())
+		}
+	})
+
+	t.Run("partial config fills only unset fields", func(t *testing.T) {
+		partial := &WebTimeoutsConfig{
+			DashboardCacheTTL:    "5s",
+			DashboardSSEInterval: "1s",
+		}
+		got := partial.WithDefaults()
+
+		// Explicitly set fields are preserved.
+		if got.DashboardCacheTTL != "5s" {
+			t.Errorf("DashboardCacheTTL = %q, want 5s", got.DashboardCacheTTL)
+		}
+		if got.DashboardSSEInterval != "1s" {
+			t.Errorf("DashboardSSEInterval = %q, want 1s", got.DashboardSSEInterval)
+		}
+		// Omitted fields inherit the canonical default — most importantly the
+		// 120s max run timeout that previously fell back to 60s.
+		if got.MaxRunTimeout != "120s" {
+			t.Errorf("MaxRunTimeout = %q, want 120s", got.MaxRunTimeout)
+		}
+		if got.CmdTimeout != "15s" {
+			t.Errorf("CmdTimeout = %q, want 15s", got.CmdTimeout)
+		}
+		if got.FetchTimeout != "8s" {
+			t.Errorf("FetchTimeout = %q, want 8s", got.FetchTimeout)
+		}
+	})
+
+	t.Run("does not mutate receiver", func(t *testing.T) {
+		partial := &WebTimeoutsConfig{DashboardCacheTTL: "5s"}
+		_ = partial.WithDefaults()
+		if partial.MaxRunTimeout != "" {
+			t.Errorf("receiver mutated: MaxRunTimeout = %q, want empty", partial.MaxRunTimeout)
+		}
+	})
+}
+
 func TestDefaultWorkerStatusConfig(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultWorkerStatusConfig()

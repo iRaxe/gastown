@@ -81,8 +81,10 @@
         "gh_cmd_timeout": "10s",
         "tmux_cmd_timeout": "2s",
         "fetch_timeout": "8s",
+        "dashboard_cache_ttl": "10s",
+        "dashboard_sse_interval": "2s",
         "default_run_timeout": "30s",
-        "max_run_timeout": "60s"
+        "max_run_timeout": "120s"
     },
 
     "worker_status": {

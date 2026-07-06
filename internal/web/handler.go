@@ -463,11 +463,11 @@ func generateCSRFToken() string {
 }
 
 // NewDashboardMux creates an HTTP handler that serves both the dashboard and API.
-// webCfg may be nil, in which case defaults are used.
+// webCfg may be nil or partial; any unset field falls back to the canonical
+// default so a block that sets only some knobs (e.g. the dashboard pacing
+// values) still gets the documented defaults for the rest.
 func NewDashboardMux(fetcher ConvoyFetcher, webCfg *config.WebTimeoutsConfig) (http.Handler, error) {
-	if webCfg == nil {
-		webCfg = config.DefaultWebTimeoutsConfig()
-	}
+	webCfg = webCfg.WithDefaults()
 
 	csrfToken := generateCSRFToken()
 
@@ -479,7 +479,7 @@ func NewDashboardMux(fetcher ConvoyFetcher, webCfg *config.WebTimeoutsConfig) (h
 	convoyHandler.cacheTTL = dashboardDurationOrDefault(webCfg.DashboardCacheTTL, defaultCacheTTL)
 
 	defaultRunTimeout := config.ParseDurationOrDefault(webCfg.DefaultRunTimeout, 30*time.Second)
-	maxRunTimeout := config.ParseDurationOrDefault(webCfg.MaxRunTimeout, 60*time.Second)
+	maxRunTimeout := config.ParseDurationOrDefault(webCfg.MaxRunTimeout, 120*time.Second)
 	sseInterval := dashboardDurationOrDefault(webCfg.DashboardSSEInterval, defaultSSEInterval)
 	apiHandler := newAPIHandlerWithSSEInterval(defaultRunTimeout, maxRunTimeout, csrfToken, sseInterval)
 
