@@ -2249,14 +2249,18 @@ func (m *Manager) workstateInputForPolecat(name string, state State, issue strin
 			sourceTerminal = true
 		}
 	}
+	workIssue := issue
+	if workIssue == "" {
+		workIssue = sourceHint
+	}
 	input.MQCheckRequired = input.Branch != ""
 	input.HasSubmittableWork = hasSubmittableWorkForWorkstate(clonePath, targetRefs)
-	input.AssignedBeadTerminal = m.assignedBeadTerminal(issue)
+	input.AssignedBeadTerminal = m.assignedBeadTerminal(workIssue)
 	workTerminal := input.AssignedBeadTerminal || sourceTerminal || hookTerminal
 	if CanIgnoreStaleCleanupStatus(input.CleanupStatus, workTerminal, hookSafe, activeMRSafe, gitSafe) {
 		input.IgnoreCleanupStatus = true
 	}
-	input.MQNotRequired = m.mqNotRequiredSource(issue)
+	input.MQNotRequired = m.mqNotRequiredSource(workIssue)
 	if input.MQCheckRequired && input.HasSubmittableWork && !input.AssignedBeadTerminal && !input.MQNotRequired {
 		mr, err := m.beads.FindMRForBranchAny(input.Branch)
 		if err != nil {

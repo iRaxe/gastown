@@ -161,7 +161,7 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 			return d
 		} else if !in.HasSubmittableWork || in.MQNotRequired {
 			d.MQStatus = "not_required"
-		} else if in.AssignedBeadTerminal || in.MRSubmitted {
+		} else if in.MRSubmitted {
 			d.MQStatus = "submitted"
 		} else {
 			d.Verdict = WorkstateVerdictNeedsMQSubmit

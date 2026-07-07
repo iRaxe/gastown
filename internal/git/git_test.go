@@ -3295,7 +3295,7 @@ func TestUnpushedCommitsPrefersExactRemoteBranchOverUpstream(t *testing.T) {
 
 func TestComparisonRefCandidatesPreferRemoteTrackingRef(t *testing.T) {
 	got := comparisonRefCandidates("main", "origin")
-	want := []string{"origin/main", "main"}
+	want := []string{"upstream/main", "origin/main", "main"}
 	if len(got) != len(want) {
 		t.Fatalf("comparisonRefCandidates length = %d, want %d: %v", len(got), len(want), got)
 	}

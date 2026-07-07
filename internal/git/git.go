@@ -2802,6 +2802,12 @@ func comparisonRefCandidates(ref, remote string) []string {
 	if strings.HasPrefix(ref, "refs/") || strings.HasPrefix(ref, remote+"/") {
 		return []string{ref}
 	}
+	if strings.HasPrefix(ref, "upstream/") {
+		return []string{ref}
+	}
+	if !strings.Contains(ref, "/") && remote != "upstream" {
+		return []string{"upstream/" + ref, remote + "/" + ref, ref}
+	}
 	return []string{remote + "/" + ref, ref}
 }
 
