@@ -205,6 +205,52 @@ func TestDeaconPatrolDoesNotRunAgeBasedWispGC(t *testing.T) {
 	}
 }
 
+// TestActivePatrolFormulasDoNotRunAgeBasedWispGC verifies that patrol loops
+// only clean closed wisps from inside their own active molecules.
+//
+// Age-based GC deletes any old non-closed ephemeral wisp, including a hooked
+// patrol root that has been active longer than the threshold. That can erase
+// the current patrol from under gt hook before the next health check.
+func TestActivePatrolFormulasDoNotRunAgeBasedWispGC(t *testing.T) {
+	patrolFormulas := []string{
+		"mol-witness-patrol.formula.toml",
+		"mol-deacon-patrol.formula.toml",
+		"mol-refinery-patrol.formula.toml",
+	}
+
+	for _, name := range patrolFormulas {
+		t.Run(name, func(t *testing.T) {
+			content, err := formulasFS.ReadFile("formulas/" + name)
+			if err != nil {
+				t.Fatalf("reading %s: %v", name, err)
+			}
+
+			f, err := Parse(content)
+			if err != nil {
+				t.Fatalf("parsing %s: %v", name, err)
+			}
+
+			var inboxDesc string
+			for _, step := range f.Steps {
+				if step.ID == "inbox-check" {
+					inboxDesc = step.Description
+					break
+				}
+			}
+			if inboxDesc == "" {
+				t.Fatalf("%s: inbox-check step not found or has empty description", name)
+			}
+
+			if !strings.Contains(inboxDesc, "bd mol wisp gc --closed --force") {
+				t.Fatalf("%s inbox-check must keep closed-wisp cleanup", name)
+			}
+			if strings.Contains(inboxDesc, "bd mol wisp gc --age") {
+				t.Fatalf("%s inbox-check must not run age-based wisp GC inside the active patrol", name)
+			}
+		})
+	}
+}
+
 // TestPatrolFormulasUseDynamicBeadResolution verifies that patrol formulas
 // resolve their agent bead ID dynamically at runtime via `gt agents resolve`,
 // rather than hardcoding a prefix like `gt-<rig>-refinery`.
