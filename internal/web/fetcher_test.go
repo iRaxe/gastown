@@ -603,6 +603,56 @@ esac
 	})
 }
 
+func TestFetchIssuesSkipsRigIdentityBeads(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-based command test")
+	}
+
+	bdPath := filepath.Join(t.TempDir(), "bd")
+	script := `#!/bin/sh
+case "$*" in
+  *"--status=open"*)
+    cat <<'JSON'
+[
+  {"id":"app-rig-app_mywavo","title":"app_mywavo","type":"rig","priority":2,"labels":["gt:rig"],"created_at":"2026-07-08T08:14:00Z"},
+  {"id":"ec-rig-easycom","title":"easycom","type":"issue","priority":2,"labels":["gt:rig"],"created_at":"2026-07-08T08:14:00Z"},
+  {"id":"hq-292","title":"Track daemon process behind installed binary warning","type":"bug","priority":2,"labels":[],"created_at":"2026-07-08T13:29:18Z"}
+]
+JSON
+    ;;
+  *"--status=hooked"*)
+    cat <<'JSON'
+[
+  {"id":"hq-300","title":"Real hooked task","type":"task","priority":3,"labels":[],"created_at":"2026-07-08T13:31:00Z"}
+]
+JSON
+    ;;
+  *)
+    echo "[]"
+    ;;
+esac
+`
+	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+
+	f := &LiveConvoyFetcher{townRoot: t.TempDir(), cmdTimeout: 5 * time.Second, bdBin: bdPath}
+	rows, err := f.FetchIssues()
+	if err != nil {
+		t.Fatalf("FetchIssues returned error: %v", err)
+	}
+
+	var ids []string
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	got := strings.Join(ids, ",")
+	want := "hq-292,hq-300"
+	if got != want {
+		t.Fatalf("FetchIssues ids = %q, want %q", got, want)
+	}
+}
+
 func TestFetchConvoysBreakerBacksOffAfterBdFailures(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-based command test")

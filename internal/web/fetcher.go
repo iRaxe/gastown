@@ -1751,16 +1751,16 @@ func (f *LiveConvoyFetcher) FetchIssues() ([]IssueRow, error) {
 
 	var rows []IssueRow
 	for _, bead := range beads {
-		// Skip internal types (messages, convoys, queues, merge-requests, wisps)
+		// Skip internal/identity types (messages, convoys, queues, merge-requests, wisps, rigs)
 		// Check both legacy type field and gt: labels
 		isInternal := false
 		switch bead.Type {
-		case "message", "convoy", "queue", "merge-request", "wisp", "agent":
+		case "message", "convoy", "queue", "merge-request", "wisp", "agent", "rig":
 			isInternal = true
 		}
 		for _, l := range bead.Labels {
 			switch l {
-			case "gt:message", "gt:convoy", "gt:queue", "gt:merge-request", "gt:wisp", "gt:agent":
+			case "gt:message", "gt:convoy", "gt:queue", "gt:merge-request", "gt:wisp", "gt:agent", "gt:rig":
 				isInternal = true
 			}
 		}
