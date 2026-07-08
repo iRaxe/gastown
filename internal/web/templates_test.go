@@ -147,8 +147,11 @@ func TestConvoyTemplate_HtmxAutoRefresh(t *testing.T) {
 	if !strings.Contains(output, "sse:dashboard-update") {
 		t.Error("Template should contain SSE dashboard-update trigger")
 	}
-	if !strings.Contains(output, "every 30s") {
-		t.Error("Template should contain polling fallback trigger")
+	if !strings.Contains(output, "every 10s [!window.pauseRefresh]") {
+		t.Error("Template should poll every 10s unless refresh is paused")
+	}
+	if strings.Contains(output, "!window.sseConnected") {
+		t.Error("Template polling should not be disabled while SSE is connected")
 	}
 }
 

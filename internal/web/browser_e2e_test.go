@@ -248,8 +248,11 @@ func TestBrowser_HtmxAutoRefresh(t *testing.T) {
 	if !strings.Contains(html, "hx-trigger") {
 		t.Error("Expected hx-trigger attribute for auto-refresh")
 	}
-	if !strings.Contains(html, "every 30s") {
-		t.Error("Expected 'every 30s' trigger for auto-refresh")
+	if !strings.Contains(html, "every 10s [!window.pauseRefresh]") {
+		t.Error("Expected 'every 10s [!window.pauseRefresh]' trigger for auto-refresh")
+	}
+	if strings.Contains(html, "!window.sseConnected") {
+		t.Error("Expected polling to remain enabled while SSE is connected")
 	}
 
 	// Verify htmx library is loaded

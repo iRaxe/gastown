@@ -576,8 +576,11 @@ func TestConvoyHandler_HTMXAutoRefresh(t *testing.T) {
 	if !strings.Contains(body, "sse:dashboard-update") {
 		t.Error("Response should contain 'sse:dashboard-update' trigger for SSE")
 	}
-	if !strings.Contains(body, "every 30s") {
-		t.Error("Response should contain 'every 30s' polling fallback")
+	if !strings.Contains(body, "every 10s [!window.pauseRefresh]") {
+		t.Error("Response should poll every 10s unless refresh is paused")
+	}
+	if strings.Contains(body, "!window.sseConnected") {
+		t.Error("Response polling should not be disabled while SSE is connected")
 	}
 }
 
