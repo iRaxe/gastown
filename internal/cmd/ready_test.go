@@ -145,6 +145,18 @@ func TestFilterFormulaScaffolds_EmptyIssues(t *testing.T) {
 	}
 }
 
+func TestFilterIdentityBeadsSkipsConvoys(t *testing.T) {
+	issues := []*beads.Issue{
+		{ID: "hq-cv-lrizc", Title: "Work: daemon warning", Type: "task", Labels: []string{"gt:convoy"}},
+		{ID: "hq-292", Title: "Track daemon process behind installed binary warning", Type: "bug"},
+	}
+
+	filtered := filterIdentityBeads(issues)
+	if got, want := issueIDs(filtered), []string{"hq-292"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("filtered IDs = %v, want %v", got, want)
+	}
+}
+
 func TestGetWispIDsUsesBdMolWispList(t *testing.T) {
 	beadsPath := t.TempDir()
 	if err := os.WriteFile(filepath.Join(beadsPath, "issues.jsonl"), []byte(`{"id":"stale-jsonl-wisp"}`+"\n"), 0644); err != nil {

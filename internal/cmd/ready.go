@@ -417,25 +417,30 @@ func getWispIDs(beadsPath string) map[string]bool {
 	return wispIDs
 }
 
-// filterIdentityBeads removes agent, role, and rig identity beads from the list.
+// filterIdentityBeads removes agent, role, rig, and convoy bookkeeping beads from the list.
 // These are status trackers, not actionable work items.
 //
 // Since bd ready --json doesn't include labels, we filter by:
 //   - issue_type "agent" (agent lifecycle beads)
-//   - Labels if present (gt:agent, gt:role, gt:rig)
+//   - issue_type "convoy" or hq-cv-* IDs (convoy tracking beads)
+//   - Labels if present (gt:agent, gt:role, gt:rig, gt:convoy)
 //   - ID suffix "-role" (role definition beads like hq-crew-role)
 //   - ID prefix matching "<prefix>-rig-" (rig identity beads like gt-rig-gastown)
 func filterIdentityBeads(issues []*beads.Issue) []*beads.Issue {
 	identityLabels := map[string]bool{
-		"gt:agent": true,
-		"gt:role":  true,
-		"gt:rig":   true,
+		"gt:agent":  true,
+		"gt:role":   true,
+		"gt:rig":    true,
+		"gt:convoy": true,
 	}
 
 	filtered := make([]*beads.Issue, 0, len(issues))
 	for _, issue := range issues {
 		// Filter by issue_type (agent beads)
 		if beads.IsAgentBead(issue) {
+			continue
+		}
+		if issue.Type == "convoy" {
 			continue
 		}
 
@@ -458,6 +463,9 @@ func filterIdentityBeads(issues []*beads.Issue) []*beads.Issue {
 
 		// Filter rig identity beads (IDs containing "-rig-")
 		if strings.Contains(issue.ID, "-rig-") {
+			continue
+		}
+		if strings.HasPrefix(issue.ID, "hq-cv-") {
 			continue
 		}
 
