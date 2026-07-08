@@ -26,6 +26,7 @@ type PatrolConfig struct {
 	WorkLoopSteps []string     // role-specific instructions
 	ExtraVars     []string     // additional --var key=value args for wisp creation
 	Beads         *beads.Beads // optional injected beads instance (for test isolation)
+	BurnExemptIDs []string     // patrol IDs protected from pre-spawn cleanup
 }
 
 // maxStalePurgePerRun caps the number of stale patrol beads cleaned up in a
@@ -59,18 +60,55 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 		return "", "", false, fmt.Errorf("listing active patrol work: %w", listErr)
 	}
 
-	// Identify active patrol and collect stale ones for cleanup.
-	// Stop scanning as soon as the active patrol is found to avoid N+1
-	// checkHasOpenChildren queries when many accumulated orphans are present.
-	// Stale cleanup is capped at maxStalePurgePerRun to limit write pressure.
+	activeBead, matched, skipped := findPatrolCandidateInList(b, cfg, hookedBeads, false)
+
+	if activeBead != nil {
+		return activeBead.ID, formatBeadLine(activeBead), true, nil
+	}
+
+	// If we found matching patrols but skipped them all due to errors,
+	// return an error so the caller doesn't auto-spawn a duplicate.
+	if skipped > 0 {
+		return "", "", false, fmt.Errorf("discovery incomplete: %d patrol(s) skipped due to child-listing errors", skipped)
+	}
+	if matched > 0 {
+		return "", "", false, nil
+	}
+
+	// Recovery path for hook pointer drift: if the assignee-filtered query misses
+	// but a matching patrol wisp remains hooked, scan active work across assignees
+	// and accept only patrols compatible with this role's assignee.
+	recoveryBeads, recoveryErr := listActiveWorkAcrossStatuses(b)
+	if recoveryErr != nil {
+		return "", "", false, fmt.Errorf("listing recovery patrol work: %w", recoveryErr)
+	}
+	activeBead, _, skipped = findPatrolCandidateInList(b, cfg, recoveryBeads, true)
+	if activeBead != nil {
+		return activeBead.ID, formatBeadLine(activeBead), true, nil
+	}
+	if skipped > 0 {
+		return "", "", false, fmt.Errorf("discovery incomplete: %d recovery patrol(s) skipped due to child-listing errors", skipped)
+	}
+	return "", "", false, nil
+}
+
+func findPatrolCandidateInList(b *beads.Beads, cfg PatrolConfig, candidates []*beads.Issue, requireCompatibleAssignee bool) (*beads.Issue, int, int) {
 	var activeBead *beads.Issue
 	var staleIDs []string
-	var skipped int // tracks patrols skipped due to child-listing errors
+	var matched int
+	var skipped int
 
-	for _, bead := range hookedBeads {
+	for _, bead := range candidates {
+		if bead == nil {
+			continue
+		}
 		if !strings.HasPrefix(bead.Title, cfg.PatrolMolName) {
 			continue
 		}
+		if requireCompatibleAssignee && !patrolAssigneeMatches(cfg.Assignee, bead.Assignee) {
+			continue
+		}
+		matched++
 
 		hasOpen, err := checkHasOpenChildren(b, bead.ID)
 		if err != nil {
@@ -96,7 +134,6 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 		}
 	}
 
-	// Clean up stale patrols (capped at maxStalePurgePerRun)
 	for _, id := range staleIDs {
 		closeDescendants(b, id)
 		if err := b.ForceCloseWithReason("stale patrol cleanup", id); err != nil {
@@ -104,16 +141,22 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 		}
 	}
 
-	if activeBead != nil {
-		return activeBead.ID, formatBeadLine(activeBead), true, nil
-	}
+	return activeBead, matched, skipped
+}
 
-	// If we found matching patrols but skipped them all due to errors,
-	// return an error so the caller doesn't auto-spawn a duplicate.
-	if skipped > 0 {
-		return "", "", false, fmt.Errorf("discovery incomplete: %d patrol(s) skipped due to child-listing errors", skipped)
+func patrolAssigneeMatches(expected, actual string) bool {
+	if expected == actual {
+		return true
 	}
-	return "", "", false, nil
+	return deaconAssigneeEquivalent(expected) && deaconAssigneeEquivalent(actual)
+}
+
+func deaconAssigneeEquivalent(assignee string) bool {
+	return strings.TrimRight(assignee, "/") == "deacon"
+}
+
+func deaconPatrolAssignee() string {
+	return "deacon/"
 }
 
 // checkHasOpenChildren returns true if the given parent has any children
@@ -170,6 +213,9 @@ func burnPreviousPatrolWisps(cfg PatrolConfig) {
 		if !strings.HasPrefix(bead.Title, cfg.PatrolMolName) {
 			continue
 		}
+		if patrolBurnExempt(cfg, bead.ID) {
+			continue
+		}
 
 		// Close all descendant wisps, then the root
 		closeDescendants(b, bead.ID)
@@ -183,6 +229,15 @@ func burnPreviousPatrolWisps(cfg PatrolConfig) {
 	if burned > 0 {
 		fmt.Printf("%s Burned %d previous patrol wisp(s)\n", style.Dim.Render("🔥"), burned)
 	}
+}
+
+func patrolBurnExempt(cfg PatrolConfig, id string) bool {
+	for _, exemptID := range cfg.BurnExemptIDs {
+		if id == exemptID {
+			return true
+		}
+	}
+	return false
 }
 
 // autoSpawnPatrol creates and pins a new patrol wisp.

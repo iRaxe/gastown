@@ -1565,6 +1565,7 @@
     var convoyDetail = document.getElementById('convoy-detail');
     var convoyCreateForm = document.getElementById('convoy-create-form');
     var currentConvoyId = null;
+    var convoyLiveInterval = null;
 
     // Click on convoy row to view details
     document.addEventListener('click', function(e) {
@@ -1591,11 +1592,20 @@
         document.getElementById('convoy-issues-table').style.display = 'none';
         document.getElementById('convoy-issues-empty').style.display = 'none';
         document.getElementById('convoy-add-issue-form').style.display = 'none';
+        resetConvoyLive();
 
         // Show detail, hide list and create form
         convoyList.style.display = 'none';
         convoyCreateForm.style.display = 'none';
         convoyDetail.style.display = 'block';
+
+        loadConvoyLive(convoyId);
+        if (convoyLiveInterval) clearInterval(convoyLiveInterval);
+        convoyLiveInterval = setInterval(function() {
+            if (currentConvoyId === convoyId && convoyDetail.style.display !== 'none') {
+                loadConvoyLive(convoyId, true);
+            }
+        }, 5000);
 
         // Fetch convoy status via /api/run
         fetch('/api/run', {
@@ -1651,6 +1661,86 @@
             document.getElementById('convoy-issues-loading').style.display = 'none';
             document.getElementById('convoy-issues-empty').style.display = 'block';
             document.getElementById('convoy-issues-empty').querySelector('p').textContent = 'Error: ' + err.message;
+        });
+    }
+
+    function resetConvoyLive() {
+        var loading = document.getElementById('convoy-live-loading');
+        var list = document.getElementById('convoy-live-list');
+        var empty = document.getElementById('convoy-live-empty');
+        if (loading) loading.style.display = 'block';
+        if (list) list.innerHTML = '';
+        if (empty) empty.style.display = 'none';
+    }
+
+    function loadConvoyLive(convoyId, quiet) {
+        var loading = document.getElementById('convoy-live-loading');
+        var list = document.getElementById('convoy-live-list');
+        var empty = document.getElementById('convoy-live-empty');
+        if (!list) return;
+        if (!quiet && loading) loading.style.display = 'block';
+        if (empty) empty.style.display = 'none';
+
+        fetch('/api/convoy/live?id=' + encodeURIComponent(convoyId))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (loading) loading.style.display = 'none';
+                if (data.error) {
+                    list.innerHTML = '<div class="tracked-issues-error">' + escapeHtml(data.error) + '</div>';
+                    return;
+                }
+                renderConvoyLive(data);
+            })
+            .catch(function(err) {
+                if (loading) loading.style.display = 'none';
+                list.innerHTML = '<div class="tracked-issues-error">Failed to load live activity: ' + escapeHtml(err.message) + '</div>';
+            });
+    }
+
+    function renderConvoyLive(data) {
+        var list = document.getElementById('convoy-live-list');
+        var empty = document.getElementById('convoy-live-empty');
+        if (!list) return;
+
+        var issues = data.tracked || [];
+        var html = '';
+        for (var i = 0; i < issues.length; i++) {
+            var issue = issues[i];
+            var worker = issue.worker;
+            if (!worker) continue;
+
+            var state = worker.state || (worker.running ? 'running' : 'unknown');
+            var stateClass = worker.running ? 'badge-green' : 'badge-muted';
+            if (state === 'working' || state === 'running') stateClass = 'badge-green';
+            else if (state === 'idle') stateClass = 'badge-muted';
+            else if (state === 'questions') stateClass = 'badge-yellow';
+
+            var tail = worker.terminal_tail || '';
+            var tailError = worker.tail_error || '';
+            var terminal = tail ? escapeHtml(tail) : (tailError ? 'Terminal unavailable: ' + escapeHtml(tailError) : '(no terminal output)');
+
+            html += '<div class="convoy-live-card">' +
+                '<div class="convoy-live-card-head">' +
+                    '<div>' +
+                        '<span class="issue-id">' + escapeHtml(issue.id || '') + '</span>' +
+                        '<span class="convoy-live-title">' + escapeHtml(issue.title || '') + '</span>' +
+                    '</div>' +
+                    '<span class="badge ' + stateClass + '">' + escapeHtml(state) + '</span>' +
+                '</div>' +
+                '<div class="convoy-live-meta-row">' +
+                    '<span>' + escapeHtml(worker.address || issue.assignee || '') + '</span>' +
+                    (worker.work ? '<span>work ' + escapeHtml(worker.work) + '</span>' : '') +
+                    (worker.session ? '<span>tmux ' + escapeHtml(worker.session) + '</span>' : '') +
+                    (worker.last_active ? '<span>last ' + escapeHtml(worker.last_active) + '</span>' : '') +
+                '</div>' +
+                '<pre class="convoy-live-terminal">' + terminal + '</pre>' +
+                '</div>';
+        }
+
+        list.innerHTML = html;
+        if (empty) empty.style.display = html ? 'none' : 'block';
+        list.querySelectorAll('.convoy-live-terminal').forEach(function(pre) {
+            pre.scrollTop = pre.scrollHeight;
         });
     }
 
@@ -1734,11 +1824,23 @@
 
     // Back button from convoy detail
     document.getElementById('convoy-back-btn').addEventListener('click', function() {
+        if (convoyLiveInterval) {
+            clearInterval(convoyLiveInterval);
+            convoyLiveInterval = null;
+        }
         convoyDetail.style.display = 'none';
         convoyList.style.display = 'block';
         currentConvoyId = null;
         window.pauseRefresh = false;
     });
+
+    var convoyLiveRefreshBtn = document.getElementById('convoy-live-refresh-btn');
+    if (convoyLiveRefreshBtn) {
+        convoyLiveRefreshBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            if (currentConvoyId) loadConvoyLive(currentConvoyId);
+        });
+    }
 
     // New Convoy button
     document.getElementById('new-convoy-btn').addEventListener('click', function() {

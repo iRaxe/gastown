@@ -143,6 +143,11 @@ func runMoleculeAwaitSignal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
+	if awaitSignalAgentBead != "" {
+		if agentBeadsDir, resolveErr := resolveAgentStateBeadsDir(awaitSignalAgentBead, beadsDir); resolveErr == nil {
+			beadsDir = agentBeadsDir
+		}
+	}
 
 	// Read current idle cycles and backoff window from agent bead (if specified)
 	var idleCycles int

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +30,24 @@ func TestGetEmbeddedFormulas(t *testing.T) {
 	for name, hash := range embedded {
 		if len(hash) != 64 {
 			t.Errorf("%s hash has wrong length: %d", name, len(hash))
+		}
+	}
+}
+
+func TestDeaconPatrolFormulaUsesSupportedCLICommands(t *testing.T) {
+	content, err := formulasFS.ReadFile("formulas/mol-deacon-patrol.formula.toml")
+	if err != nil {
+		t.Fatalf("read mol-deacon-patrol formula: %v", err)
+	}
+
+	formulaText := string(content)
+	unsupportedCommands := []string{
+		"gt daemon status --json",
+		"gt context --usage",
+	}
+	for _, command := range unsupportedCommands {
+		if strings.Contains(formulaText, command) {
+			t.Errorf("mol-deacon-patrol formula references unsupported command %q", command)
 		}
 	}
 }
@@ -719,6 +738,9 @@ func TestProvisionFormulas_StatError(t *testing.T) {
 func TestCheckFormulaHealth_ErrorCounter(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("os.Chmod(path, 0000) does not prevent reading on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can read files with 0000 permissions")
 	}
 	tmpDir := t.TempDir()
 

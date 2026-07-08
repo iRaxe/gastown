@@ -339,6 +339,78 @@
             margin-bottom: 8px;
         }
 
+        .convoy-live-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .convoy-live-refresh {
+            padding: 4px 10px;
+            font-size: 0.75rem;
+        }
+
+        .convoy-live-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .convoy-live-card {
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg-dark);
+            overflow: hidden;
+        }
+
+        .convoy-live-card-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .convoy-live-title {
+            margin-left: 8px;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .convoy-live-meta-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 7px 10px;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .convoy-live-meta-row span {
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 2px 6px;
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .convoy-live-terminal {
+            margin: 0;
+            padding: 10px;
+            max-height: 260px;
+            min-height: 80px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: var(--text-primary);
+            font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+            font-size: 0.78rem;
+            line-height: 1.4;
+        }
+
         .convoy-add-issue-btn {
             background: var(--green);
             border: none;

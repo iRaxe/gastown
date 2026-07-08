@@ -71,6 +71,21 @@ func listAssignedActiveWorkAcrossStatuses(b *beads.Beads, assignee string) ([]*b
 	return mergeBeadLists(assigned, nil), nil
 }
 
+func listActiveWorkAcrossStatuses(b *beads.Beads) ([]*beads.Issue, error) {
+	var active []*beads.Issue
+	for _, status := range activeWorkStatuses() {
+		beadsForStatus, err := listBeadsAcrossTables(b, beads.ListOptions{
+			Status:   status,
+			Priority: -1,
+		})
+		if err != nil {
+			return nil, err
+		}
+		active = append(active, beadsForStatus...)
+	}
+	return mergeBeadLists(active, nil), nil
+}
+
 func listChildrenAcrossTables(b *beads.Beads, parentID string) ([]*beads.Issue, error) {
 	return listBeadsAcrossTables(b, beads.ListOptions{
 		Parent:   parentID,

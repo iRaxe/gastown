@@ -522,6 +522,74 @@ func TestAPIHandler_Ready(t *testing.T) {
 	}
 }
 
+func TestAPIHandler_ConvoyLiveIncludesDogWorker(t *testing.T) {
+	binDir := t.TempDir()
+	gtPath := filepath.Join(binDir, "gt")
+	gtScript := `#!/usr/bin/env sh
+set -eu
+case "$*" in
+  "convoy status hq-cv-test --json")
+    printf '{"id":"hq-cv-test","title":"Fix production drift","status":"open","completed":0,"total":1,"tracked":[{"id":"hq-123","title":"Repair bd schema","status":"hooked","assignee":"deacon/dogs/charlie"}]}\n'
+    ;;
+  "status --json")
+    printf '{"agents":[],"rigs":[]}\n'
+    ;;
+  "dog list --json")
+    printf '[{"name":"charlie","state":"working","work":"hq-123","last_active":"2026-07-08T14:13:43+02:00"}]\n'
+    ;;
+  *)
+    printf 'unexpected gt args: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+`
+	if err := os.WriteFile(gtPath, []byte(gtScript), 0o755); err != nil {
+		t.Fatalf("write fake gt: %v", err)
+	}
+
+	handler := &APIHandler{
+		gtPath:            gtPath,
+		workDir:           t.TempDir(),
+		defaultRunTimeout: 5 * time.Second,
+		maxRunTimeout:     10 * time.Second,
+		cmdSem:            make(chan struct{}, maxConcurrentCommands),
+		csrfToken:         "test-token",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/convoy/live?id=hq-cv-test", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/convoy/live status = %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp ConvoyLiveResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.ID != "hq-cv-test" {
+		t.Fatalf("ID = %q, want hq-cv-test", resp.ID)
+	}
+	if len(resp.Tracked) != 1 {
+		t.Fatalf("tracked count = %d, want 1", len(resp.Tracked))
+	}
+	worker := resp.Tracked[0].Worker
+	if worker == nil {
+		t.Fatal("expected tracked issue to include worker")
+	}
+	if worker.Session != "hq-dog-charlie" {
+		t.Errorf("worker session = %q, want hq-dog-charlie", worker.Session)
+	}
+	if worker.State != "working" {
+		t.Errorf("worker state = %q, want working", worker.State)
+	}
+	if worker.Work != "hq-123" {
+		t.Errorf("worker work = %q, want hq-123", worker.Work)
+	}
+}
+
 func TestAPIHandler_IssueCreate_MissingTitle(t *testing.T) {
 	handler := NewAPIHandler(30*time.Second, 60*time.Second, "test-token")
 

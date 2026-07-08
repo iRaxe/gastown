@@ -661,6 +661,160 @@ func splitFirstEquals(s string) []string {
 
 // --- Patrol discovery tests (findActivePatrol) ---
 
+func TestDeaconPatrolAssigneeMatchesHookStatusIdentity(t *testing.T) {
+	if got := deaconPatrolAssignee(); got != "deacon/" {
+		t.Fatalf("deaconPatrolAssignee() = %q, want deacon/", got)
+	}
+}
+
+func TestFindActivePatrolRecoversHookedPatrolWhenAssignedQueryMisses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd script uses POSIX shell")
+	}
+
+	tmpDir := t.TempDir()
+	binDir := t.TempDir()
+	bdPath := filepath.Join(binDir, "bd")
+	script := `#!/bin/sh
+case "$*" in
+  *"--assignee=wavo_hub/witness"*|*"assignee=\"wavo_hub/witness\""*)
+    printf '%s\n' '[]'
+    ;;
+  *"--parent=hq-wisp-live"*|*"parent=\"hq-wisp-live\""*)
+    printf '%s\n' '[{"id":"hq-wisp-step","title":"await-signal","status":"open","updated_at":"2026-07-08T12:00:01Z"}]'
+    ;;
+  *"status=\"hooked\""*)
+    printf '%s\n' '[{"id":"hq-wisp-live","title":"mol-witness-patrol (wisp)","status":"hooked","assignee":"wavo_hub/witness","updated_at":"2026-07-08T12:00:00Z","ephemeral":true}]'
+    ;;
+  *"--status=hooked"*)
+    printf '%s\n' '[]'
+    ;;
+  *"status=\"in_progress\""*|*"--status=in_progress"*)
+    printf '%s\n' '[]'
+    ;;
+  *)
+    printf '%s\n' '[]'
+    ;;
+esac
+`
+	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GT_BD_TIMEOUT_SEC", "2")
+
+	cfg := PatrolConfig{
+		PatrolMolName: constants.MolWitnessPatrol,
+		BeadsDir:      tmpDir,
+		Assignee:      "wavo_hub/witness",
+		Beads:         beads.New(tmpDir),
+	}
+
+	patrolID, _, found, findErr := findActivePatrol(cfg)
+	if findErr != nil {
+		t.Fatalf("findActivePatrol error: %v", findErr)
+	}
+	if !found {
+		t.Fatal("expected fallback to recover hooked patrol wisp")
+	}
+	if patrolID != "hq-wisp-live" {
+		t.Fatalf("patrolID = %q, want hq-wisp-live", patrolID)
+	}
+}
+
+func TestPatrolReportConfirmsClosedPatrolWhenNextSpawnFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd/gt scripts use POSIX shell")
+	}
+
+	townRoot := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(townRoot, "deacon"),
+		filepath.Join(townRoot, "mayor"),
+		filepath.Join(townRoot, ".beads"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test-town"}`), 0o644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	bdScript := `#!/bin/sh
+printf '%s\n' "$*" >> "` + logPath + `"
+case "$*" in
+  *"--parent=hq-wisp-report"*|*"parent=\"hq-wisp-report\""*)
+    printf '%s\n' '[]'
+    ;;
+  *"--assignee=deacon/"*"--status=hooked"*|*"assignee=\"deacon/\""*"status=\"hooked\""*)
+    printf '%s\n' '[{"id":"hq-wisp-report","title":"mol-deacon-patrol (wisp)","status":"hooked","assignee":"deacon/","description":"","updated_at":"2026-07-08T12:00:00Z","ephemeral":true}]'
+    ;;
+  *"status=\"hooked\""*)
+    printf '%s\n' '[{"id":"hq-wisp-report","title":"mol-deacon-patrol (wisp)","status":"hooked","assignee":"deacon/","description":"","updated_at":"2026-07-08T12:00:00Z","ephemeral":true}]'
+    ;;
+  *)
+    printf '%s\n' '[]'
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+
+	gtScript := `#!/bin/sh
+case "$*" in
+  "formula list")
+    printf '%s\n' 'formula catalog temporarily unavailable' >&2
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "gt"), []byte(gtScript), 0o755); err != nil {
+		t.Fatalf("write fake gt: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GT_ROLE", "deacon")
+	t.Setenv("GT_TOWN_ROOT", townRoot)
+	t.Setenv("GT_ROOT", townRoot)
+	t.Setenv("GT_BD_TIMEOUT_SEC", "2")
+	t.Chdir(filepath.Join(townRoot, "deacon"))
+
+	oldSummary, oldSteps := patrolReportSummary, patrolReportSteps
+	t.Cleanup(func() {
+		patrolReportSummary, patrolReportSteps = oldSummary, oldSteps
+	})
+	patrolReportSummary = "closed despite spawn failure"
+	patrolReportSteps = "heartbeat:OK,inbox-check:OK"
+
+	if err := runPatrolReport(nil, nil); err != nil {
+		t.Fatalf("runPatrolReport() returned error after patrol close succeeded: %v", err)
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	log := string(logData)
+	if !strings.Contains(log, "update hq-wisp-report") ||
+		!strings.Contains(log, "Patrol report: closed despite spawn failure") ||
+		!strings.Contains(log, "Steps:") {
+		t.Fatalf("patrol summary/audit was not written before close; log:\n%s", log)
+	}
+	if !strings.Contains(log, "close hq-wisp-report --reason=patrol cycle complete: closed despite spawn failure --force") {
+		t.Fatalf("patrol root was not force-closed with report reason; log:\n%s", log)
+	}
+	if strings.Contains(log, "close hq-wisp-report --reason=burned: replaced by new patrol cycle --force") {
+		t.Fatalf("reported patrol close reason was overwritten by next-cycle burn; log:\n%s", log)
+	}
+}
+
 func requireBd(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("bd"); err != nil {

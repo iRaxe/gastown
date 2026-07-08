@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -13,7 +15,9 @@ func TestAssigneeToSessionName(t *testing.T) {
 		want     string
 	}{
 		{"deacon", "hq-deacon"},
+		{"deacon/", "hq-deacon"},
 		{"mayor", "hq-mayor"},
+		{"mayor/", "hq-mayor"},
 		{"gastown/witness", "gt-witness"},
 		{"gastown/refinery", "gt-refinery"},
 		{"gastown/polecats/max", "gt-max"},
@@ -31,6 +35,53 @@ func TestAssigneeToSessionName(t *testing.T) {
 				t.Errorf("assigneeToSessionName(%q) = %q, want %q", tt.assignee, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestListHookedBeadsIncludesEphemeralWisps(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd script uses POSIX shell")
+	}
+
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "bd.log")
+	bdPath := filepath.Join(binDir, "bd")
+	script := strings.ReplaceAll(`#!/bin/sh
+echo "$*" >> "LOGPATH"
+case "$*" in
+  *"ephemeral=true"*"status=\"hooked\""*)
+    printf '%s\n' '[{"id":"hq-wisp-patrol","title":"mol-deacon-patrol (wisp)","status":"hooked","assignee":"deacon/","updated_at":"2026-07-08T12:00:00Z","ephemeral":true}]'
+    ;;
+  *"--status=hooked"*)
+    printf '%s\n' '[{"id":"hq-dog-work","title":"dog work","status":"hooked","assignee":"deacon/dogs/bravo","updated_at":"2026-07-08T12:00:01Z"}]'
+    ;;
+  *)
+    printf '%s\n' '[]'
+    ;;
+esac
+`, "LOGPATH", logPath)
+	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GT_BD_TIMEOUT_SEC", "2")
+
+	got, err := listHookedBeads(townRoot)
+	if err != nil {
+		t.Fatalf("listHookedBeads: %v", err)
+	}
+
+	ids := map[string]bool{}
+	for _, bead := range got {
+		ids[bead.ID] = true
+	}
+	if !ids["hq-dog-work"] || !ids["hq-wisp-patrol"] {
+		t.Fatalf("listHookedBeads IDs = %v, want durable dog work and ephemeral patrol wisp", ids)
 	}
 }
 

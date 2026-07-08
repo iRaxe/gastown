@@ -237,6 +237,17 @@
                                     <p>No issues in this convoy</p>
                                 </div>
                             </div>
+                            <div class="convoy-detail-section" id="convoy-live-section">
+                                <div class="convoy-live-header">
+                                    <h4>Live Activity</h4>
+                                    <button class="btn-secondary convoy-live-refresh" id="convoy-live-refresh-btn">Refresh</button>
+                                </div>
+                                <div id="convoy-live-loading" class="loading-state">Loading live activity...</div>
+                                <div id="convoy-live-list" class="convoy-live-list"></div>
+                                <div id="convoy-live-empty" class="empty-state" style="display: none;">
+                                    <p>No assigned workers</p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <!-- New Convoy Form (hidden by default) -->

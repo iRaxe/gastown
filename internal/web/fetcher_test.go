@@ -344,6 +344,33 @@ func TestParseActivityTimestamp(t *testing.T) {
 	}
 }
 
+func TestGetSessionActivityForAssignee_DogAddress(t *testing.T) {
+	originalRunCmd := fetcherRunCmd
+	t.Cleanup(func() { fetcherRunCmd = originalRunCmd })
+
+	const wantUnix int64 = 1783516200
+	var gotArgs []string
+	fetcherRunCmd = func(_ time.Duration, name string, args ...string) (*bytes.Buffer, error) {
+		if name != "tmux" {
+			t.Fatalf("command name = %q, want tmux", name)
+		}
+		gotArgs = append([]string(nil), args...)
+		return bytes.NewBufferString(fmt.Sprintf("hq-dog-charlie|%d\n", wantUnix)), nil
+	}
+
+	f := &LiveConvoyFetcher{tmuxCmdTimeout: time.Second}
+	got := f.getSessionActivityForAssignee("deacon/dogs/charlie")
+	if got == nil {
+		t.Fatal("got nil activity")
+	}
+	if got.Unix() != wantUnix {
+		t.Fatalf("activity unix = %d, want %d", got.Unix(), wantUnix)
+	}
+	if !strings.Contains(strings.Join(gotArgs, " "), "hq-dog-charlie") {
+		t.Fatalf("tmux args = %q, want session hq-dog-charlie", gotArgs)
+	}
+}
+
 // --- calculateWorkerWorkStatus with configurable thresholds ---
 
 func TestCalculateWorkerWorkStatus_DefaultThresholds(t *testing.T) {

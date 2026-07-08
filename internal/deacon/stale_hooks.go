@@ -2,11 +2,10 @@
 package deacon
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -155,28 +154,55 @@ func ScanStaleHooks(townRoot string, cfg *StaleHookConfig) (*StaleHookScanResult
 
 // listHookedBeads returns all beads with status=hooked.
 func listHookedBeads(townRoot string) ([]*HookedBead, error) {
-	cmd := beads.Command(townRoot, townBeadsDir(townRoot), beads.ReadOnlyRouting, "list", "--status=hooked", "--json", "--flat", "--limit=0")
-
-	output, err := cmd.Output()
+	b := beads.New(townRoot)
+	durable, err := b.List(beads.ListOptions{
+		Status:   beads.StatusHooked,
+		Priority: -1,
+	})
 	if err != nil {
-		// No hooked beads is not an error
-		if strings.Contains(string(output), "no issues found") {
-			return nil, nil
-		}
+		return nil, err
+	}
+	wisps, err := b.List(beads.ListOptions{
+		Status:    beads.StatusHooked,
+		Priority:  -1,
+		Ephemeral: true,
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	trimmed := bytes.TrimSpace(output)
-	if len(trimmed) == 0 || string(trimmed) == "null" || (trimmed[0] != '[' && trimmed[0] != '{') {
-		return nil, nil
+	merged := make([]*HookedBead, 0, len(durable)+len(wisps))
+	seen := make(map[string]struct{}, len(durable)+len(wisps))
+	for _, issue := range append(durable, wisps...) {
+		if issue == nil || issue.ID == "" {
+			continue
+		}
+		if _, ok := seen[issue.ID]; ok {
+			continue
+		}
+		seen[issue.ID] = struct{}{}
+		merged = append(merged, issueToHookedBead(issue))
 	}
 
-	var beads []*HookedBead
-	if err := json.Unmarshal(output, &beads); err != nil {
-		return nil, fmt.Errorf("parsing hooked beads: %w", err)
-	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		if !merged[i].UpdatedAt.Equal(merged[j].UpdatedAt) {
+			return merged[i].UpdatedAt.After(merged[j].UpdatedAt)
+		}
+		return merged[i].ID > merged[j].ID
+	})
 
-	return beads, nil
+	return merged, nil
+}
+
+func issueToHookedBead(issue *beads.Issue) *HookedBead {
+	updatedAt, _ := time.Parse(time.RFC3339Nano, issue.UpdatedAt)
+	return &HookedBead{
+		ID:        issue.ID,
+		Title:     issue.Title,
+		Status:    issue.Status,
+		Assignee:  issue.Assignee,
+		UpdatedAt: updatedAt,
+	}
 }
 
 // assigneeToSessionName converts an assignee address to a tmux session name.

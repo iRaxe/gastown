@@ -60,7 +60,7 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 			RoleName:      "deacon",
 			PatrolMolName: constants.MolDeaconPatrol,
 			BeadsDir:      roleInfo.TownRoot,
-			Assignee:      "deacon",
+			Assignee:      deaconPatrolAssignee(),
 		}
 	case RoleWitness:
 		cfg = PatrolConfig{
@@ -123,14 +123,17 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Closed patrol %s\n", style.Success.Render("✓"), patrolID)
 
 	// Start next cycle
-	newPatrolID, err := autoSpawnPatrol(cfg)
+	spawnCfg := cfg
+	spawnCfg.BurnExemptIDs = append(spawnCfg.BurnExemptIDs, patrolID)
+	newPatrolID, err := autoSpawnPatrol(spawnCfg)
 	if err != nil {
 		if newPatrolID != "" {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", err.Error())
 			fmt.Printf("New patrol: %s\n", newPatrolID)
 			return nil
 		}
-		return fmt.Errorf("starting next patrol cycle: %w", err)
+		fmt.Fprintf(os.Stderr, "warning: patrol %s was closed, but starting next patrol cycle failed: %s\n", patrolID, err.Error())
+		return nil
 	}
 
 	fmt.Printf("%s Started new patrol: %s\n", style.Success.Render("✓"), newPatrolID)

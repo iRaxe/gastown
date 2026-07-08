@@ -98,6 +98,10 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
+	beadsDir, err = resolveAgentStateBeadsDir(agentBead, beadsDir)
+	if err != nil {
+		return err
+	}
 
 	// Determine operation mode
 	hasSet := len(agentStateSet) > 0

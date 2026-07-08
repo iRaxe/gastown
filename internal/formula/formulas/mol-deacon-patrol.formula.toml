@@ -1115,20 +1115,26 @@ lumberjack for automatic rotation and is handled separately.
 Log locations: $GT_ROOT/daemon/dolt.log, $GT_ROOT/daemon/dolt-server.log,
 and per-rig .beads/dolt-server.log files.
 
-**Step 2: Prune state.json of dead sessions**
+**Step 2: Verify daemon/session state**
 
-The state.json tracks active sessions. Prune entries for sessions that no longer exist:
+The daemon owns state pruning. Use supported checks to compare daemon health,
+registered agents, and live tmux sessions:
 ```bash
-# Check for stale session entries
-gt daemon status --json 2>/dev/null
+gt daemon status
+gt agents list
+tmux list-sessions -F '#S' 2>/dev/null
 ```
 
-If state.json references sessions not in tmux:
-- Remove the stale entries
-- The daemon's internal cleanup should handle this, but verify
+If an agent appears active but no matching tmux session exists:
+- Run `gt agents check --json` for stale lock / identity diagnostics
+- Record the mismatch in the patrol report
+- Re-check after the next daemon heartbeat before escalating
+
+Do not hand-edit daemon state files. The daemon's internal cleanup should prune
+dead entries.
 
 **Note**: Log rotation prevents disk bloat from long-running daemons.
-State pruning keeps runtime state accurate."""
+State verification keeps runtime state accurate without unsupported daemon flags."""
 
 [[steps]]
 id = "patrol-cleanup"
@@ -1164,20 +1170,32 @@ id = "context-check"
 title = "Check own context limit"
 needs = ["patrol-cleanup"]
 description = """
-Check own context limit.
+Assess whether this Deacon session should continue or hand off to a fresh one.
 
-The Deacon runs in a Claude session with finite context. Check if approaching the limit:
+Gather concrete signals:
 
+1. **Process memory** — check your own RSS:
 ```bash
-gt context --usage
+ps -o rss= -p $$   # KB; divide by 1024 for MB
 ```
 
-If context is high (>80%), prepare for handoff:
-- Summarize current state
-- Note any pending work
-- Write handoff to molecule state
+2. **Session age** — check how long this tmux session has been running:
+```bash
+SESSION=$(tmux display-message -p '#S')
+CREATED=$(tmux display-message -t "$SESSION" -p '#{session_created}')
+echo "Session age: $(( ($(date +%s) - CREATED) / 3600 ))h"
+```
 
-This enables the Deacon to burn and respawn cleanly."""
+3. **Context usage** — use your internal sense of how much context you have
+consumed. Are you losing track of earlier observations, repeating yourself, or
+getting verbose?
+
+4. **Work done this cycle** — note whether this was a light idle patrol or a
+heavy cycle with many incidents.
+
+Make a LOW/HIGH judgment for loop-or-exit. If multiple signals suggest the
+session is heavy (high RSS, long session, substantial context consumed), treat
+context as HIGH and hand off in the next step."""
 
 [[steps]]
 id = "loop-or-exit"

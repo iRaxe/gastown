@@ -501,7 +501,7 @@ type workerDetail struct {
 }
 
 // getWorkersFromAssignees gets worker activity from tmux sessions based on issue assignees.
-// Assignees are in format "rigname/polecats/polecatname" which maps to tmux session "gt-rigname-polecatname".
+// Assignees are usually "rigname/polecats/polecatname" or "deacon/dogs/dogname".
 func (f *LiveConvoyFetcher) getWorkersFromAssignees(details map[string]*issueDetail) map[string]*workerDetail {
 	result := make(map[string]*workerDetail)
 
@@ -538,18 +538,11 @@ func (f *LiveConvoyFetcher) getWorkersFromAssignees(details map[string]*issueDet
 }
 
 // getSessionActivityForAssignee looks up tmux session activity for an assignee.
-// Assignee format: "rigname/polecats/polecatname" -> session "gt-rigname-polecatname"
 func (f *LiveConvoyFetcher) getSessionActivityForAssignee(assignee string) *time.Time {
-	// Parse assignee: "roxas/polecats/dag" -> rig="roxas", polecat="dag"
-	parts := strings.Split(assignee, "/")
-	if len(parts) != 3 || parts[1] != "polecats" {
+	sessionName := sessionNameForAssignee(strings.TrimSpace(assignee))
+	if sessionName == "" {
 		return nil
 	}
-	rig := parts[0]
-	polecat := parts[2]
-
-	// Construct session name
-	sessionName := session.PolecatSessionName(session.PrefixFor(rig), polecat)
 
 	// Query tmux for session activity
 	// Format: session_activity returns unix timestamp
@@ -577,6 +570,24 @@ func (f *LiveConvoyFetcher) getSessionActivityForAssignee(assignee string) *time
 
 	activity := time.Unix(activityUnix, 0)
 	return &activity
+}
+
+func sessionNameForAssignee(assignee string) string {
+	trimmed := strings.TrimSuffix(strings.TrimSpace(assignee), "/")
+	const dogPrefix = "deacon/dogs/"
+	if strings.HasPrefix(trimmed, dogPrefix) {
+		dogName := strings.TrimPrefix(trimmed, dogPrefix)
+		if dogName == "" || strings.Contains(dogName, "/") {
+			return ""
+		}
+		return session.DogSessionName(dogName)
+	}
+
+	identity, err := session.ParseAddress(trimmed)
+	if err != nil {
+		return ""
+	}
+	return identity.SessionName()
 }
 
 // getAllPolecatActivity returns the most recent activity from any running polecat session.

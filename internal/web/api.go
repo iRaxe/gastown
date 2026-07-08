@@ -140,6 +140,8 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleCrew(w, r)
 	case path == "/ready" && r.Method == http.MethodGet:
 		h.handleReady(w, r)
+	case path == "/convoy/live" && r.Method == http.MethodGet:
+		h.handleConvoyLive(w, r)
 	case path == "/events" && r.Method == http.MethodGet:
 		h.handleSSE(w, r)
 	case path == "/session/preview" && r.Method == http.MethodGet:
@@ -1807,6 +1809,59 @@ type ReadyResponse struct {
 	} `json:"summary"`
 }
 
+// ConvoyLiveResponse is the response for /api/convoy/live.
+type ConvoyLiveResponse struct {
+	ID        string            `json:"id"`
+	Title     string            `json:"title,omitempty"`
+	Status    string            `json:"status,omitempty"`
+	Completed int               `json:"completed"`
+	Total     int               `json:"total"`
+	Tracked   []ConvoyLiveIssue `json:"tracked"`
+}
+
+// ConvoyLiveIssue is a tracked issue with resolved worker/session context.
+type ConvoyLiveIssue struct {
+	ID       string            `json:"id"`
+	Title    string            `json:"title,omitempty"`
+	Status   string            `json:"status,omitempty"`
+	Assignee string            `json:"assignee,omitempty"`
+	Worker   *ConvoyLiveWorker `json:"worker,omitempty"`
+}
+
+// ConvoyLiveWorker describes the agent currently responsible for a convoy issue.
+type ConvoyLiveWorker struct {
+	Name         string `json:"name,omitempty"`
+	Address      string `json:"address,omitempty"`
+	Session      string `json:"session,omitempty"`
+	State        string `json:"state,omitempty"`
+	Work         string `json:"work,omitempty"`
+	Running      bool   `json:"running"`
+	HasWork      bool   `json:"has_work,omitempty"`
+	LastActive   string `json:"last_active,omitempty"`
+	UnreadMail   int    `json:"unread_mail,omitempty"`
+	TerminalTail string `json:"terminal_tail,omitempty"`
+	TailError    string `json:"tail_error,omitempty"`
+}
+
+type convoyLiveAgent struct {
+	Name         string `json:"name"`
+	Address      string `json:"address"`
+	Session      string `json:"session"`
+	Role         string `json:"role"`
+	State        string `json:"state"`
+	Running      bool   `json:"running"`
+	HasWork      bool   `json:"has_work"`
+	UnreadMail   int    `json:"unread_mail"`
+	FirstSubject string `json:"first_subject"`
+}
+
+type convoyLiveDog struct {
+	Name       string `json:"name"`
+	State      string `json:"state"`
+	Work       string `json:"work"`
+	LastActive string `json:"last_active"`
+}
+
 // handleCrew returns crew status across all rigs with proper state detection.
 func (h *APIHandler) handleCrew(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -2084,6 +2139,247 @@ func (h *APIHandler) handleReady(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleConvoyLive returns read-only convoy issue, worker, and terminal context.
+func (h *APIHandler) handleConvoyLive(w http.ResponseWriter, r *http.Request) {
+	convoyID := r.URL.Query().Get("id")
+	if convoyID == "" {
+		h.sendError(w, "Missing convoy id", http.StatusBadRequest)
+		return
+	}
+	if !isValidID(convoyID) {
+		h.sendError(w, "Invalid convoy id format", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	output, err := h.runGtCommand(ctx, 8*time.Second, []string{"convoy", "status", convoyID, "--json"})
+	if err != nil {
+		h.sendError(w, "Failed to load convoy: "+err.Error()+"\n"+output, http.StatusInternalServerError)
+		return
+	}
+
+	var raw struct {
+		ID        string `json:"id"`
+		Title     string `json:"title"`
+		Status    string `json:"status"`
+		Completed int    `json:"completed"`
+		Total     int    `json:"total"`
+		Tracked   []struct {
+			ID       string `json:"id"`
+			Title    string `json:"title"`
+			Status   string `json:"status"`
+			Assignee string `json:"assignee"`
+		} `json:"tracked"`
+	}
+	if err := json.Unmarshal([]byte(output), &raw); err != nil {
+		h.sendError(w, "Failed to parse convoy JSON: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	agents := h.loadConvoyLiveAgents(ctx)
+	dogs := h.loadConvoyLiveDogs(ctx)
+
+	resp := ConvoyLiveResponse{
+		ID:        raw.ID,
+		Title:     raw.Title,
+		Status:    raw.Status,
+		Completed: raw.Completed,
+		Total:     raw.Total,
+		Tracked:   make([]ConvoyLiveIssue, 0, len(raw.Tracked)),
+	}
+	if resp.ID == "" {
+		resp.ID = convoyID
+	}
+	if resp.Total == 0 && len(raw.Tracked) > 0 {
+		resp.Total = len(raw.Tracked)
+	}
+
+	for _, item := range raw.Tracked {
+		issue := ConvoyLiveIssue{
+			ID:       item.ID,
+			Title:    item.Title,
+			Status:   item.Status,
+			Assignee: item.Assignee,
+		}
+		if worker := resolveConvoyLiveWorker(item.Assignee, agents, dogs); worker != nil {
+			if worker.Session != "" {
+				if tail, err := captureSessionTail(ctx, worker.Session, 80); err != nil {
+					worker.TailError = err.Error()
+				} else {
+					worker.TerminalTail = tail
+					worker.Running = true
+				}
+			}
+			issue.Worker = worker
+		}
+		resp.Tracked = append(resp.Tracked, issue)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *APIHandler) loadConvoyLiveAgents(ctx context.Context) map[string]convoyLiveAgent {
+	agents := make(map[string]convoyLiveAgent)
+	output, err := h.runGtCommand(ctx, 5*time.Second, []string{"status", "--json"})
+	if err != nil {
+		return agents
+	}
+
+	var status struct {
+		Agents []convoyLiveAgent `json:"agents"`
+		Rigs   []struct {
+			Agents []convoyLiveAgent `json:"agents"`
+		} `json:"rigs"`
+	}
+	if err := json.Unmarshal([]byte(output), &status); err != nil {
+		return agents
+	}
+
+	add := func(a convoyLiveAgent) {
+		if a.Address != "" {
+			agents[strings.TrimSuffix(a.Address, "/")] = a
+			agents[a.Address] = a
+		}
+		if a.Name != "" {
+			agents[strings.TrimSuffix(a.Name, "/")] = a
+			agents[a.Name] = a
+		}
+	}
+	for _, a := range status.Agents {
+		add(a)
+	}
+	for _, rig := range status.Rigs {
+		for _, a := range rig.Agents {
+			add(a)
+		}
+	}
+	return agents
+}
+
+func (h *APIHandler) loadConvoyLiveDogs(ctx context.Context) map[string]convoyLiveDog {
+	dogs := make(map[string]convoyLiveDog)
+	output, err := h.runGtCommand(ctx, 5*time.Second, []string{"dog", "list", "--json"})
+	if err != nil {
+		return dogs
+	}
+
+	var raw []convoyLiveDog
+	if err := json.Unmarshal([]byte(output), &raw); err != nil {
+		return dogs
+	}
+	for _, dog := range raw {
+		if dog.Name != "" {
+			dogs[dog.Name] = dog
+		}
+	}
+	return dogs
+}
+
+func resolveConvoyLiveWorker(assignee string, agents map[string]convoyLiveAgent, dogs map[string]convoyLiveDog) *ConvoyLiveWorker {
+	assignee = strings.TrimSpace(assignee)
+	if assignee == "" {
+		return nil
+	}
+	trimmed := strings.TrimSuffix(assignee, "/")
+
+	const dogPrefix = "deacon/dogs/"
+	if strings.HasPrefix(trimmed, dogPrefix) {
+		dogName := strings.TrimPrefix(trimmed, dogPrefix)
+		if dogName == "" || !isValidID(dogName) {
+			return nil
+		}
+		worker := &ConvoyLiveWorker{
+			Name:    dogName,
+			Address: trimmed,
+			Session: session.DogSessionName(dogName),
+		}
+		if dog, ok := dogs[dogName]; ok {
+			worker.State = dog.State
+			worker.Work = dog.Work
+			worker.LastActive = dog.LastActive
+			worker.Running = dog.State == "working"
+			worker.HasWork = dog.Work != ""
+		}
+		return worker
+	}
+
+	if agent, ok := agents[trimmed]; ok {
+		return convoyLiveWorkerFromAgent(trimmed, agent)
+	}
+	if agent, ok := agents[assignee]; ok {
+		return convoyLiveWorkerFromAgent(trimmed, agent)
+	}
+
+	identity, err := session.ParseAddress(trimmed)
+	if err != nil {
+		return nil
+	}
+	sessionName := identity.SessionName()
+	if sessionName == "" {
+		return nil
+	}
+	return &ConvoyLiveWorker{
+		Name:    identity.Name,
+		Address: trimmed,
+		Session: sessionName,
+	}
+}
+
+func convoyLiveWorkerFromAgent(address string, agent convoyLiveAgent) *ConvoyLiveWorker {
+	name := agent.Name
+	if name == "" {
+		name = address
+	}
+	return &ConvoyLiveWorker{
+		Name:       name,
+		Address:    address,
+		Session:    agent.Session,
+		State:      agent.State,
+		Running:    agent.Running,
+		HasWork:    agent.HasWork,
+		UnreadMail: agent.UnreadMail,
+	}
+}
+
+func captureSessionTail(ctx context.Context, sessionName string, lines int) (string, error) {
+	if sessionName == "" {
+		return "", fmt.Errorf("missing session name")
+	}
+	if !session.HasKnownPrefix(sessionName) {
+		return "", fmt.Errorf("invalid session name: unknown prefix")
+	}
+	for _, c := range sessionName {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return "", fmt.Errorf("invalid session name: contains invalid characters")
+		}
+	}
+	if lines <= 0 {
+		lines = 80
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	cmd := tmux.BuildCommandContext(ctx, "capture-pane", "-t", sessionName, "-p", "-J", "-S", fmt.Sprintf("-%d", lines))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("tmux capture-pane timed out")
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", fmt.Errorf("failed to capture pane: %s", msg)
+	}
+	return stdout.String(), nil
 }
 
 // SessionPreviewResponse is the response for /api/session/preview.
