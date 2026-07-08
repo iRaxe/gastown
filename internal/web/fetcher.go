@@ -1137,7 +1137,7 @@ func (f *LiveConvoyFetcher) FetchMail() ([]MailRow, error) {
 			FromRaw:   m.CreatedBy,
 			To:        to,
 			Subject:   m.Title,
-			Timestamp: timestamp.Format("15:04"),
+			Timestamp: formatClockTime(timestamp),
 			Age:       age,
 			Priority:  priorityStr,
 			Type:      msgType,
@@ -1157,24 +1157,49 @@ func (f *LiveConvoyFetcher) FetchMail() ([]MailRow, error) {
 // formatMailAge returns a human-readable age string.
 func formatMailAge(d time.Duration) string {
 	if d < time.Minute {
-		return "just now"
+		return "adesso"
 	}
 	if d < time.Hour {
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+		return fmt.Sprintf("%d min fa", int(d.Minutes()))
 	}
 	if d < 24*time.Hour {
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
+		return fmt.Sprintf("%d h fa", int(d.Hours()))
 	}
-	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	return fmt.Sprintf("%d gg fa", int(d.Hours()/24))
 }
 
-// formatTimestamp formats a time as "Jan 26, 3:45 PM" (or "Jan 26 2006, 3:45 PM" if different year).
-func formatTimestamp(t time.Time) string {
-	now := time.Now()
-	if t.Year() != now.Year() {
-		return t.Format("Jan 2 2006, 3:04 PM")
+var italianShortMonths = [...]string{
+	"gen", "feb", "mar", "apr", "mag", "giu",
+	"lug", "ago", "set", "ott", "nov", "dic",
+}
+
+func dashboardTimeLocation() *time.Location {
+	if time.Local != nil {
+		return time.Local
 	}
-	return t.Format("Jan 2, 3:04 PM")
+	return time.UTC
+}
+
+func formatClockTime(t time.Time) string {
+	return t.In(dashboardTimeLocation()).Format("15:04")
+}
+
+// formatTimestamp formats a time in the dashboard's local timezone using Italian 24h notation.
+func formatTimestamp(t time.Time) string {
+	return formatTimestampInLocation(t, time.Now(), dashboardTimeLocation())
+}
+
+func formatTimestampInLocation(t, now time.Time, loc *time.Location) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	t = t.In(loc)
+	now = now.In(loc)
+	month := italianShortMonths[int(t.Month())-1]
+	if t.Year() != now.Year() {
+		return fmt.Sprintf("%d %s %d, %02d:%02d", t.Day(), month, t.Year(), t.Hour(), t.Minute())
+	}
+	return fmt.Sprintf("%d %s, %02d:%02d", t.Day(), month, t.Hour(), t.Minute())
 }
 
 // formatAgentAddress shortens agent addresses for display.

@@ -994,24 +994,23 @@
         var now = new Date();
         var diff = now - d;
 
-        // Format: "Jan 26, 3:45 PM" or "Jan 26 2025, 3:45 PM" if different year
-        var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        // Format: "8 lug, 16:32" or "8 lug 2025, 16:32" if different year
+        var months = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
         var month = months[d.getMonth()];
         var day = d.getDate();
         var hours = d.getHours();
         var minutes = d.getMinutes();
-        var ampm = hours >= 12 ? 'PM' : 'AM';
-        hours = hours % 12 || 12;
+        var hourStr = hours < 10 ? '0' + hours : '' + hours;
         var minStr = minutes < 10 ? '0' + minutes : minutes;
-        var yearPart = d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() + ',' : '';
-        var dateStr = month + ' ' + day + yearPart + ', ' + hours + ':' + minStr + ' ' + ampm;
+        var yearPart = d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : '';
+        var dateStr = day + ' ' + month + yearPart + ', ' + hourStr + ':' + minStr;
 
         // Add relative time in parentheses for recent messages
         var relative = '';
-        if (diff < 60000) relative = ' (just now)';
-        else if (diff < 3600000) relative = ' (' + Math.floor(diff / 60000) + 'm ago)';
-        else if (diff < 86400000) relative = ' (' + Math.floor(diff / 3600000) + 'h ago)';
-        else if (diff < 604800000) relative = ' (' + Math.floor(diff / 86400000) + 'd ago)';
+        if (diff < 60000) relative = ' (adesso)';
+        else if (diff < 3600000) relative = ' (' + Math.floor(diff / 60000) + ' min fa)';
+        else if (diff < 86400000) relative = ' (' + Math.floor(diff / 3600000) + ' h fa)';
+        else if (diff < 604800000) relative = ' (' + Math.floor(diff / 86400000) + ' gg fa)';
 
         return dateStr + relative;
     }

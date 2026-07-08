@@ -344,6 +344,51 @@ func TestParseActivityTimestamp(t *testing.T) {
 	}
 }
 
+func TestFormatTimestampInLocationUsesItalianLocalTime(t *testing.T) {
+	loc := time.FixedZone("CEST", 2*60*60)
+	event := time.Date(2026, time.July, 8, 14, 32, 17, 0, time.UTC)
+	now := time.Date(2026, time.July, 8, 16, 34, 0, 0, loc)
+
+	got := formatTimestampInLocation(event, now, loc)
+	want := "8 lug, 16:32"
+	if got != want {
+		t.Fatalf("formatTimestampInLocation() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatTimestampInLocationIncludesYearForDifferentYear(t *testing.T) {
+	loc := time.FixedZone("CET", 1*60*60)
+	event := time.Date(2025, time.December, 31, 22, 45, 0, 0, time.UTC)
+	now := time.Date(2026, time.January, 1, 1, 0, 0, 0, loc)
+
+	got := formatTimestampInLocation(event, now, loc)
+	want := "31 dic 2025, 23:45"
+	if got != want {
+		t.Fatalf("formatTimestampInLocation() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatMailAgeItalian(t *testing.T) {
+	tests := []struct {
+		name string
+		in   time.Duration
+		want string
+	}{
+		{"under minute", 30 * time.Second, "adesso"},
+		{"minutes", 12 * time.Minute, "12 min fa"},
+		{"hours", 2 * time.Hour, "2 h fa"},
+		{"days", 48 * time.Hour, "2 gg fa"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatMailAge(tt.in); got != tt.want {
+				t.Fatalf("formatMailAge() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetSessionActivityForAssignee_DogAddress(t *testing.T) {
 	originalRunCmd := fetcherRunCmd
 	t.Cleanup(func() { fetcherRunCmd = originalRunCmd })
