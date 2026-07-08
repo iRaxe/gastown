@@ -463,6 +463,36 @@ func TestClosedMoleculeStepReapBehavior(t *testing.T) {
 	}
 }
 
+func TestScanFlagsOpenWispThresholdAnomaly(t *testing.T) {
+	now := time.Now().UTC()
+	state := &fakeReaperState{
+		wisps: map[string]*fakeWisp{},
+		ops:   map[int][]string{},
+	}
+	for i := 0; i < DefaultAlertThreshold+1; i++ {
+		id := fmt.Sprintf("open-%d", i)
+		state.wisps[id] = &fakeWisp{id: id, status: "open", issueType: "task", createdAt: now}
+	}
+	db := openFakeReaperDB(t, state)
+	t.Cleanup(func() { _ = db.Close() })
+
+	scan, err := Scan(db, "testdb", 24*time.Hour, 7*24*time.Hour, 7*24*time.Hour, 30*24*time.Hour)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	if len(scan.Anomalies) != 1 {
+		t.Fatalf("Scan anomalies = %#v, want one open_wisp_threshold anomaly", scan.Anomalies)
+	}
+	anomaly := scan.Anomalies[0]
+	if anomaly.Type != "open_wisp_threshold" {
+		t.Fatalf("Scan anomaly type = %q, want open_wisp_threshold", anomaly.Type)
+	}
+	if anomaly.Count != DefaultAlertThreshold+1 {
+		t.Fatalf("Scan anomaly count = %d, want %d", anomaly.Count, DefaultAlertThreshold+1)
+	}
+}
+
 var fakeReaperDriverID uint64
 
 func openFakeReaperDB(t *testing.T, state *fakeReaperState) *sql.DB {

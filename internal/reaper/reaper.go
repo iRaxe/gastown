@@ -388,6 +388,13 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 	if err := db.QueryRowContext(ctx, openQuery).Scan(&result.OpenWisps); err != nil {
 		return nil, fmt.Errorf("count open wisps: %w", err)
 	}
+	if result.OpenWisps > DefaultAlertThreshold {
+		result.Anomalies = append(result.Anomalies, Anomaly{
+			Type:    "open_wisp_threshold",
+			Message: fmt.Sprintf("%s has %d open wisp(s), exceeding alert threshold %d", dbName, result.OpenWisps, DefaultAlertThreshold),
+			Count:   result.OpenWisps,
+		})
+	}
 
 	// Anomaly detection: dangling parent references.
 	danglingQuery := `
