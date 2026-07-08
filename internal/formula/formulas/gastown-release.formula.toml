@@ -344,7 +344,7 @@ description = """
 Restart gt daemon to pick up the new version.
 
 ```bash
-gt daemon stop && gt daemon start
+gt daemon restart
 ```
 
 Verify:

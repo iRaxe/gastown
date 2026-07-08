@@ -6,6 +6,16 @@ import (
 	"testing"
 )
 
+func TestDaemonRestartCommandRegistered(t *testing.T) {
+	cmd, _, err := daemonCmd.Find([]string{"restart"})
+	if err != nil {
+		t.Fatalf("daemon restart command not registered: %v", err)
+	}
+	if cmd == nil || cmd.Use != "restart" {
+		t.Fatalf("daemon restart resolved to %#v, want use restart", cmd)
+	}
+}
+
 func TestReadDaemonStartupFailure(t *testing.T) {
 	townRoot := t.TempDir()
 	daemonDir := filepath.Join(townRoot, "daemon")

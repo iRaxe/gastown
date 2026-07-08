@@ -55,6 +55,20 @@ Examples:
 	RunE: runDaemonStop,
 }
 
+var daemonRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Restart the daemon",
+	Long: `Restart the Gas Town daemon.
+
+If the daemon is running, this stops it first and then starts a new daemon
+process from the currently installed gt binary. If the daemon is already
+stopped, this starts it.
+
+Examples:
+  gt daemon restart`,
+	RunE: runDaemonRestart,
+}
+
 var daemonStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show daemon status",
@@ -152,6 +166,7 @@ var (
 func init() {
 	daemonCmd.AddCommand(daemonStartCmd)
 	daemonCmd.AddCommand(daemonStopCmd)
+	daemonCmd.AddCommand(daemonRestartCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
 	daemonCmd.AddCommand(daemonLogsCmd)
 	daemonCmd.AddCommand(daemonRunCmd)
@@ -256,6 +271,28 @@ func runDaemonStop(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runDaemonRestart(cmd *cobra.Command, args []string) error {
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	running, pid, err := daemon.IsRunning(townRoot)
+	if err != nil {
+		return fmt.Errorf("checking daemon status: %w", err)
+	}
+	if running {
+		if err := daemon.StopDaemon(townRoot); err != nil {
+			return fmt.Errorf("stopping daemon: %w", err)
+		}
+		fmt.Printf("%s Daemon stopped (was PID %d)\n", style.Bold.Render("✓"), pid)
+	} else {
+		fmt.Printf("%s Daemon was not running\n", style.Dim.Render("○"))
+	}
+
+	return runDaemonStart(cmd, args)
+}
+
 func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
@@ -290,7 +327,7 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 				if binaryModTime.After(state.StartedAt) {
 					fmt.Printf("  %s Binary is newer than process - consider '%s'\n",
 						style.Bold.Render("⚠"),
-						style.Dim.Render("gt daemon stop && gt daemon start"))
+						style.Dim.Render("gt daemon restart"))
 				}
 			}
 		}

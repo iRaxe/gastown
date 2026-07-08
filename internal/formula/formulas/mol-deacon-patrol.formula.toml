@@ -1125,6 +1125,10 @@ gt agents list
 tmux list-sessions -F '#S' 2>/dev/null
 ```
 
+If `gt daemon status` reports `Binary is newer than process`, restart only the
+daemon process with `gt daemon restart`, then run `gt daemon status` again. This
+refreshes the daemon onto the installed binary without cycling agent sessions.
+
 If an agent appears active but no matching tmux session exists:
 - Run `gt agents check --json` for stale lock / identity diagnostics
 - Record the mismatch in the patrol report

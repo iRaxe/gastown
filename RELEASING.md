@@ -45,7 +45,7 @@ git push origin vX.Y.Z
 
 ```bash
 make install        # builds, codesigns, installs to ~/.local/bin
-gt daemon stop && gt daemon start
+gt daemon restart
 ```
 
 ## What Happens After Tag Push
