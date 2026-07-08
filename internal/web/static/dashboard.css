@@ -81,10 +81,10 @@
             content: "○ ";
         }
 
-        /* Grid layout for panels - auto-fit responsive */
+        /* Grid layout for panels - cap desktop density at three columns */
         .panels {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 16px;
             margin-bottom: 16px;
             width: 100%;
@@ -2275,6 +2275,12 @@
         }
 
         /* Medium screens / tablets */
+        @media (max-width: 1200px) {
+            .panels {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
         @media (max-width: 900px) {
             .summary-stats {
                 gap: 16px;
