@@ -185,13 +185,18 @@ func buildStepAudit(formulaName string, stepsFlag string) string {
 		if !ok {
 			status = "SKIP"
 		}
-		if status == "OK" {
+		if isPatrolStepOK(status) {
 			okCount++
 		}
 		parts = append(parts, stepID+" "+status)
 	}
 
 	return fmt.Sprintf("Steps: %s (%d/%d)", strings.Join(parts, " | "), okCount, len(allStepIDs))
+}
+
+func isPatrolStepOK(status string) bool {
+	status = strings.TrimSpace(strings.ToUpper(status))
+	return status == "OK" || strings.HasPrefix(status, "OK(")
 }
 
 // parseStepResults parses a comma-separated string of step:STATUS pairs.

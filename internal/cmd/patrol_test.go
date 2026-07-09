@@ -202,6 +202,14 @@ func TestBuildStepAudit(t *testing.T) {
 			wantContain: "heartbeat OK",
 		},
 		{
+			name:        "deacon patrol counts ok statuses with reasons",
+			formulaName: "mol-deacon-patrol",
+			stepsFlag:   "heartbeat:OK,inbox-check:OK,fire-notifications:OK(none),plugin-run:OK(none),compact-report:OK(already-sent),patrol-digest:OK(none),loop-or-exit:OK",
+			wantPrefix:  "Steps:",
+			wantSuffix:  "(7/26)",
+			wantContain: "fire-notifications OK(NONE)",
+		},
+		{
 			name:        "skipped steps shown as SKIP",
 			formulaName: "mol-deacon-patrol",
 			stepsFlag:   "heartbeat:OK",

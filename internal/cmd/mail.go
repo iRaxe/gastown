@@ -16,9 +16,9 @@ var (
 	mailType          string
 	mailReplyTo       string
 	mailNotify        bool
-	mailNoNotify      bool // Suppress auto-nudge notification to recipient
-	mailTo            string   // --to flag (alternative to positional arg)
-	mailFrom          string   // --from flag (override sender, for relay/bridge use)
+	mailNoNotify      bool   // Suppress auto-nudge notification to recipient
+	mailTo            string // --to flag (alternative to positional arg)
+	mailFrom          string // --from flag (override sender, for relay/bridge use)
 	mailSendSelf      bool
 	mailCC            []string // CC recipients
 	mailInboxJSON     bool
@@ -30,6 +30,7 @@ var (
 	mailCheckJSON     bool
 	mailCheckIdentity string
 	mailThreadJSON    bool
+	mailDeleteForce   bool
 	mailReplySubject  string
 	mailReplyMessage  string
 	mailStdin         bool // Read message body from stdin
@@ -205,7 +206,8 @@ This closes the messages in beads.
 
 Examples:
   gt mail delete hq-abc123
-  gt mail delete hq-abc123 hq-def456 hq-ghi789`,
+  gt mail delete hq-abc123 hq-def456 hq-ghi789
+  gt mail delete hq-abc123 --force`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runMailDelete,
 }
@@ -519,6 +521,7 @@ func init() {
 	// Archive flags
 	mailArchiveCmd.Flags().BoolVar(&mailArchiveStale, "stale", false, "Archive messages sent before session start")
 	mailArchiveCmd.Flags().BoolVarP(&mailArchiveDryRun, "dry-run", "n", false, "Show what would be archived without archiving")
+	mailDeleteCmd.Flags().BoolVarP(&mailDeleteForce, "force", "f", false, "Force delete even if the message is assigned to a variant identity")
 
 	// Add subcommands
 	mailCmd.AddCommand(mailSendCmd)

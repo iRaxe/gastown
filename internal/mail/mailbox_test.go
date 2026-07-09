@@ -439,6 +439,43 @@ func TestNewMailboxWithBeadsDir(t *testing.T) {
 	}
 }
 
+func TestMailboxDeleteForcePassesForceToBdClose(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake bd is POSIX-only")
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "bd.log")
+	fakeBD := filepath.Join(binDir, "bd")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$BD_LOG"
+if [ "$1" = "show" ]; then
+  printf '%s\n' '[{"id":"hq-j18","title":"handoff","description":"","status":"open","priority":2,"assignee":"deacon/","created_at":"2026-07-09T00:00:00Z","labels":["gt:message"]}]'
+  exit 0
+fi
+exit 0
+`
+	if err := os.WriteFile(fakeBD, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_LOG", logPath)
+
+	m := NewMailboxWithBeadsDir("deacon/", t.TempDir(), t.TempDir())
+	if err := m.DeleteForce("hq-j18"); err != nil {
+		t.Fatalf("DeleteForce: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake bd log: %v", err)
+	}
+	got := strings.TrimSpace(string(logBytes))
+	if !strings.Contains(got, "close hq-j18 --force") {
+		t.Fatalf("bd args = %q, want force close", got)
+	}
+}
+
 func TestMailboxListFromDirConvergesWispQueryAndFiltersStatuses(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fake bd is POSIX-only")

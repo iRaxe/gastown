@@ -571,33 +571,36 @@ func (m *Mailbox) MarkRead(id string) error {
 	if m.legacy {
 		return m.markReadLegacy(id)
 	}
-	return m.markReadBeads(id)
+	return m.markReadBeads(id, false)
 }
 
-func (m *Mailbox) markReadBeads(id string) error {
+func (m *Mailbox) markReadBeads(id string, force bool) error {
 	if err := m.acknowledgeDeliveryForPrimary(id); err != nil {
 		return err
 	}
 
 	// Resolve correct beadsDir based on bead ID prefix (GH#2423)
 	primary := beads.ResolveBeadsDirForID(m.beadsDir, id)
-	err := m.closeInDir(id, primary)
+	err := m.closeInDir(id, primary, force)
 	if errors.Is(err, ErrMessageNotFound) && primary != m.beadsDir {
 		// Cross-rig bead IDs (e.g. ne-*) may live in the home DB when created
 		// via the mail router (which always uses town beads). Fall back to
 		// m.beadsDir before giving up. See ne-bgr.
-		return m.closeInDir(id, m.beadsDir)
+		return m.closeInDir(id, m.beadsDir, force)
 	}
 	return err
 }
 
 // closeInDir closes a message in a specific beads directory.
-func (m *Mailbox) closeInDir(id, beadsDir string) error {
+func (m *Mailbox) closeInDir(id, beadsDir string, force bool) error {
 	if m.store != nil {
 		return m.storeCloseInDir(id)
 	}
 
 	args := []string{"close", id}
+	if force {
+		args = append(args, "--force")
+	}
 	// Pass session ID for work attribution if available
 	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
 		args = append(args, "--session="+sessionID)
@@ -847,6 +850,14 @@ func (m *Mailbox) Delete(id string) error {
 		return m.deleteLegacy(id)
 	}
 	return m.MarkRead(id) // beads: just acknowledge/close
+}
+
+// DeleteForce removes a message, bypassing bead close ownership/dependency checks.
+func (m *Mailbox) DeleteForce(id string) error {
+	if m.legacy {
+		return m.deleteLegacy(id)
+	}
+	return m.markReadBeads(id, true)
 }
 
 func (m *Mailbox) deleteLegacy(id string) error {

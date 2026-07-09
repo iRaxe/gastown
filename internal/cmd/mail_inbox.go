@@ -309,7 +309,13 @@ func runMailDelete(cmd *cobra.Command, args []string) error {
 	deleted := 0
 	var errors []string
 	for _, msgID := range args {
-		if err := mailbox.Delete(msgID); err != nil {
+		var err error
+		if mailDeleteForce {
+			err = mailbox.DeleteForce(msgID)
+		} else {
+			err = mailbox.Delete(msgID)
+		}
+		if err != nil {
 			errors = append(errors, fmt.Sprintf("%s: %v", msgID, err))
 		} else {
 			deleted++
