@@ -9,9 +9,11 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/testutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -54,6 +56,69 @@ func newTestDAG(t *testing.T) *testDAG {
 		t:     t,
 		beads: make(map[string]*testBead),
 	}
+}
+
+func TestTestDAGSetupReapsOwnedDoltProcesses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows — process argv assumptions")
+	}
+
+	fakeDolt := buildFakeDoltBinary(t)
+	var cmd *exec.Cmd
+
+	ok := t.Run("fixture", func(t *testing.T) {
+		townRoot, _ := newTestDAG(t).
+			Task("gt-a", "Task A", withRig("gastown")).
+			Setup(t)
+
+		legacyDoltDir := filepath.Join(townRoot, ".beads", "dolt")
+		if err := os.MkdirAll(legacyDoltDir, 0755); err != nil {
+			t.Fatalf("mkdir legacy dolt dir: %v", err)
+		}
+
+		cmd = exec.Command(fakeDolt, "sql-server", "-H", "127.0.0.1", "-P", "45555", "--loglevel=warning")
+		cmd.Dir = legacyDoltDir
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start fake dolt: %v", err)
+		}
+	})
+	if !ok || cmd == nil || cmd.Process == nil {
+		return
+	}
+
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	select {
+	case <-waited:
+	case <-time.After(2 * time.Second):
+		_ = cmd.Process.Kill()
+		<-waited
+		t.Fatalf("owned Dolt sql-server process %d still running after testDAG cleanup", cmd.Process.Pid)
+	}
+}
+
+func buildFakeDoltBinary(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.go")
+	bin := filepath.Join(dir, "dolt")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	if err := os.WriteFile(src, []byte(`package main
+
+import "time"
+
+func main() {
+	time.Sleep(30 * time.Second)
+}
+`), 0644); err != nil {
+		t.Fatalf("write fake dolt source: %v", err)
+	}
+	if out, err := exec.Command("go", "build", "-o", bin, src).CombinedOutput(); err != nil {
+		t.Fatalf("build fake dolt: %v\n%s", err, out)
+	}
+	return bin
 }
 
 // Epic adds an epic bead to the DAG.
@@ -374,6 +439,7 @@ func (d *testDAG) Setup(t *testing.T) (townRoot, logPath string) {
 	t.Helper()
 
 	townRoot = t.TempDir()
+	testutil.ReapOwnedDoltOnCleanup(t, townRoot)
 
 	// Create workspace marker directories.
 	if err := os.MkdirAll(filepath.Join(townRoot, "mayor", "rig"), 0755); err != nil {

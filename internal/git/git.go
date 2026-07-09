@@ -3006,6 +3006,14 @@ func runtimeArtifactRoot(path string) (string, bool) {
 			return strings.Join(parts[:i+1], "/") + "/", true
 		}
 	}
+	if len(parts) >= 2 && parts[0] == "beads" {
+		switch parts[1] {
+		case "interactions.jsonl", "metadata.json", "last-touched", "sync_base.jsonl", "dolt-access.lock":
+			return strings.Join(parts[:2], "/"), true
+		case "mq", "backup":
+			return strings.Join(parts[:2], "/") + "/", true
+		}
+	}
 
 	base := filepath.Base(bare)
 	lower := strings.ToLower(base)

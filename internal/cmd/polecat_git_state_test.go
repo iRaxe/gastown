@@ -153,6 +153,34 @@ func TestGetGitStateIgnoresOpenCodeRuntimeArtifacts(t *testing.T) {
 	}
 }
 
+func TestGetGitStateIgnoresTrackedBeadsInteractionsDeletion(t *testing.T) {
+	repo := setupGitStateRemoteRepo(t)
+	runGitCmd(t, repo, "switch", "-c", "polecat/beads-runtime")
+
+	interactions := filepath.Join(repo, ".beads", "interactions.jsonl")
+	if err := os.MkdirAll(filepath.Dir(interactions), 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	writeTestFile(t, interactions, "")
+	runGitCmd(t, repo, "add", ".beads/interactions.jsonl")
+	runGitCmd(t, repo, "commit", "-m", "track beads interactions")
+	runGitCmd(t, repo, "push", "-u", "origin", "polecat/beads-runtime")
+	if err := os.Remove(interactions); err != nil {
+		t.Fatalf("remove interactions: %v", err)
+	}
+
+	state, err := getGitState(repo)
+	if err != nil {
+		t.Fatalf("getGitState: %v", err)
+	}
+	if !state.Clean {
+		t.Fatalf("tracked .beads/interactions.jsonl deletion should not dirty recovery state: %+v", state)
+	}
+	if len(state.UncommittedFiles) != 0 {
+		t.Fatalf("UncommittedFiles = %v, want none for runtime-only deletion", state.UncommittedFiles)
+	}
+}
+
 func setupGitStateRemoteRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

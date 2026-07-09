@@ -1132,13 +1132,37 @@ func doltProcessMatchesTownPaths(expectedDataDir, actualDataDir, actualConfigPat
 }
 
 func doltProcessMatchesTown(townRoot string, pid int, config *Config) bool {
+	actualCWD := getProcessCWD(pid)
+	if processCWDWithinTown(actualCWD, townRoot) {
+		return true
+	}
 	return doltProcessMatchesTownPaths(
 		config.DataDir,
 		GetDoltDataDirFromProcess(pid),
 		getDoltConfigPathFromProcess(pid),
-		getProcessCWD(pid),
+		actualCWD,
 		getServerDataDir(townRoot, pid),
 	)
+}
+
+func processCWDWithinTown(cwd, townRoot string) bool {
+	cwd = strings.TrimSuffix(strings.TrimSpace(cwd), " (deleted)")
+	if cwd == "" || townRoot == "" {
+		return false
+	}
+	absCWD, err := filepath.Abs(cwd)
+	if err != nil {
+		return false
+	}
+	absRoot, err := filepath.Abs(townRoot)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absCWD)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."))
 }
 
 func doltProcessOwnerPathFromEvidence(actualDataDir, actualConfigPath, actualCWD, stateDataDir string) string {
@@ -1462,7 +1486,11 @@ func ownedDoltTestServerCandidates(townRoot string, config *Config) []int {
 	if info, err := readSQLServerInfo(config); err == nil {
 		add(info.PID)
 	}
-	for _, pid := range findOwnedDoltTestServerCandidatesFromPS(processList(), townRoot, config.DataDir) {
+	psOutput := processList()
+	for _, pid := range findOwnedDoltTestServerCandidatesFromPS(psOutput, townRoot, config.DataDir) {
+		add(pid)
+	}
+	for _, pid := range doltSQLServerCandidatesFromPS(psOutput) {
 		add(pid)
 	}
 	return pids
@@ -1488,6 +1516,28 @@ func findOwnedDoltTestServerCandidatesFromPS(output, townRoot, dataDir string) [
 			continue
 		}
 		if !containsPathBoundary(line, absRoot) && !containsPathBoundary(line, absDataDir) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid <= 0 {
+			continue
+		}
+		if isDoltSQLServerArgs(fields[1:]) {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+func doltSQLServerCandidatesFromPS(output string) []int {
+	var pids []int
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.Contains(line, "sql-server") || !strings.Contains(line, "dolt") {
 			continue
 		}
 		fields := strings.Fields(line)

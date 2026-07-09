@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	gitpkg "github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 )
 
@@ -685,6 +686,46 @@ func TestDryRunNukeSummary(t *testing.T) {
 				t.Errorf("dryRunNukeSummary() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestShouldSkipBestEffortNukePushWhenAbsentBranchAlreadyPreserved(t *testing.T) {
+	repo := setupRecoveryGitRepo(t)
+	runGit(t, repo, "switch", "-c", "polecat/merged")
+	writeRecoveryFile(t, filepath.Join(repo, "merged.txt"), "merged")
+	runGit(t, repo, "add", "merged.txt")
+	runGit(t, repo, "commit", "-m", "merged")
+	runGit(t, repo, "switch", "main")
+	runGit(t, repo, "merge", "--ff-only", "polecat/merged")
+	runGit(t, repo, "push", "origin", "main")
+	runGit(t, repo, "switch", "polecat/merged")
+
+	g := gitpkg.NewGit(repo)
+	exists, err := g.PushRemoteBranchExists("origin", "polecat/merged")
+	if err != nil {
+		t.Fatalf("PushRemoteBranchExists: %v", err)
+	}
+	if exists {
+		t.Fatal("test setup expected branch absent from push remote")
+	}
+
+	skip, reason := shouldSkipBestEffortNukePush(g, repo, "polecat/merged", nil, &GitState{Clean: true}, nil)
+	if !skip {
+		t.Fatalf("shouldSkipBestEffortNukePush() = false, want true; reason=%q", reason)
+	}
+}
+
+func TestShouldSkipBestEffortNukePushPreservesUniqueAbsentBranch(t *testing.T) {
+	repo := setupRecoveryGitRepo(t)
+	runGit(t, repo, "switch", "-c", "polecat/unique")
+	writeRecoveryFile(t, filepath.Join(repo, "unique.txt"), "unique")
+	runGit(t, repo, "add", "unique.txt")
+	runGit(t, repo, "commit", "-m", "unique")
+
+	g := gitpkg.NewGit(repo)
+	skip, reason := shouldSkipBestEffortNukePush(g, repo, "polecat/unique", nil, &GitState{Clean: true}, nil)
+	if skip {
+		t.Fatalf("shouldSkipBestEffortNukePush() = true, want false; reason=%q", reason)
 	}
 }
 

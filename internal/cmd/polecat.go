@@ -1848,6 +1848,20 @@ func dryRunNukeSummary(total, blocked int) string {
 	return fmt.Sprintf("Would nuke %d polecat(s).", total)
 }
 
+func shouldSkipBestEffortNukePush(g *git.Git, worktreePath, branch string, targetRefs []string, gitState *GitState, gitErr error) (bool, string) {
+	if g == nil || strings.TrimSpace(worktreePath) == "" || strings.TrimSpace(branch) == "" {
+		return false, ""
+	}
+	exists, err := g.PushRemoteBranchExists("origin", branch)
+	if err != nil || exists {
+		return false, ""
+	}
+	if hasSubmittableWorkForRecovery(worktreePath, targetRefs, gitState, gitErr) {
+		return false, ""
+	}
+	return true, "remote branch absent and local branch already preserved"
+}
+
 // nukePolecatFull performs the complete cleanup sequence for a single polecat:
 // 1. Kill tmux session
 // 2. Delete worktree (via RemoveWithOptions with nuclear=true)
@@ -1916,11 +1930,26 @@ func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manage
 			}
 		}
 		if pushGit != nil {
-			refspec := branchToDelete + ":" + branchToDelete
-			if err := pushGit.Push("origin", refspec, false); err != nil {
-				fmt.Printf("  %s best-effort push failed (proceeding): %v\n", style.Dim.Render("○"), err)
+			bd := beads.New(r.Path)
+			agentBeadID := polecatBeadIDForRig(r, rigName, polecatName)
+			_, fields, _ := bd.GetAgentBead(agentBeadID)
+			activeMR := ""
+			sourceHint := polecatInfo.Issue
+			if fields != nil {
+				activeMR = fields.ActiveMR
+				sourceHint = agentSourceIssueHint(polecatInfo.Issue, fields)
+			}
+			targetRefs, _ := recoveryTargetRefs(bd, polecatInfo.Issue, activeMR, branchToDelete, sourceHint)
+			gitState, gitErr := getGitStateWithTargets(polecatInfo.ClonePath, targetRefs)
+			if skip, reason := shouldSkipBestEffortNukePush(pushGit, polecatInfo.ClonePath, branchToDelete, targetRefs, gitState, gitErr); skip {
+				fmt.Printf("  %s skipped branch push before nuke (%s)\n", style.Dim.Render("○"), reason)
 			} else {
-				fmt.Printf("  %s pushed branch %s before nuke\n", style.Success.Render("✓"), branchToDelete)
+				refspec := branchToDelete + ":" + branchToDelete
+				if err := pushGit.Push("origin", refspec, false); err != nil {
+					fmt.Printf("  %s best-effort push failed (proceeding): %v\n", style.Dim.Render("○"), err)
+				} else {
+					fmt.Printf("  %s pushed branch %s before nuke\n", style.Success.Render("✓"), branchToDelete)
+				}
 			}
 		}
 	}

@@ -329,6 +329,40 @@ func TestFindOwnedDoltTestServerCandidatesFromPS(t *testing.T) {
 	}
 }
 
+func TestDoltSQLServerCandidatesFromPSIncludesPathlessServers(t *testing.T) {
+	output := strings.Join([]string{
+		"101 dolt sql-server -H 127.0.0.1 -P 38475 --loglevel=warning",
+		"102 /usr/local/bin/dolt sql-server --config /tmp/gt/.dolt-data/config.yaml",
+		"103 dolt status",
+		"104 grep dolt sql-server",
+	}, "\n")
+
+	got := doltSQLServerCandidatesFromPS(output)
+	want := []int{101, 102}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestProcessCWDWithinTownMatchesNestedLegacyDoltDir(t *testing.T) {
+	townRoot := filepath.Join(os.TempDir(), "TestCreateStagedConvoy_CleanReady123", "001")
+	cwd := filepath.Join(townRoot, ".beads", "dolt")
+	if !processCWDWithinTown(cwd, townRoot) {
+		t.Fatalf("processCWDWithinTown(%q, %q) = false, want true", cwd, townRoot)
+	}
+	if !processCWDWithinTown(cwd+" (deleted)", townRoot) {
+		t.Fatalf("processCWDWithinTown deleted cwd = false, want true")
+	}
+	if processCWDWithinTown(filepath.Join(os.TempDir(), "other", ".beads", "dolt"), townRoot) {
+		t.Fatalf("processCWDWithinTown matched sibling temp dir")
+	}
+}
+
 func TestReapOwnedTestServersRefusesNonTempRoot(t *testing.T) {
 	if _, err := ReapOwnedTestServers(string(filepath.Separator)); err == nil {
 		t.Fatal("expected non-temp root to be rejected")

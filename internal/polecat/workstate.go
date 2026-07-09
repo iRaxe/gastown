@@ -66,7 +66,7 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 		}
 	}
 
-	if in.State != StateIdle {
+	if in.State != StateIdle && in.State != StateDone {
 		verdict := WorkstateVerdictNeedsRecovery
 		needsRecovery := true
 		if in.State == StateWorking {
