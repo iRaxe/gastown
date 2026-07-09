@@ -107,13 +107,12 @@ func TestBuildPolecatInventoryItem(t *testing.T) {
 			wantVerdict: polecat.WorkstateVerdictPendingMR,
 		},
 		{
-			name:         "done without active mr is not reusable",
+			name:         "done clean without active mr is reusable",
 			polecatName:  "done",
 			fields:       &beads.AgentFields{AgentState: string(beads.AgentStateDone), CleanupStatus: string(polecat.CleanupClean)},
 			wantState:    polecat.StateDone,
-			wantVerdict:  polecat.WorkstateVerdictNeedsRecovery,
-			wantRecovery: true,
-			wantCapacity: true,
+			wantVerdict:  polecat.WorkstateVerdictSafeToNuke,
+			wantReusable: true,
 		},
 		{
 			name:        "done with active mr remains pending",
@@ -131,6 +130,48 @@ func TestBuildPolecatInventoryItem(t *testing.T) {
 				t.Fatalf("item = %+v disposition=%+v", item, item.Disposition)
 			}
 		})
+	}
+}
+
+func TestApplyCanonicalPolecatInventoryDispositionFillsGitFallback(t *testing.T) {
+	item := buildPolecatInventoryItemFromEvidence(
+		"gastown",
+		"obsidian",
+		nil,
+		polecatActiveWorkEvidence{},
+		polecatSessionSet{},
+	)
+	input := polecat.WorkstateInput{
+		State:           polecat.StateIdle,
+		CleanupStatus:   polecat.CleanupClean,
+		Branch:          "polecat/obsidian/gt-123",
+		MQCheckRequired: true,
+		MQNotRequired:   true,
+	}
+
+	if !shouldApplyCanonicalPolecatInventoryDisposition(nil, polecatActiveWorkEvidence{}) {
+		t.Fatal("missing list fields with no active work should use canonical manager disposition")
+	}
+	applyCanonicalPolecatInventoryDisposition(&item, input)
+
+	if item.CleanupStatus != string(polecat.CleanupClean) {
+		t.Fatalf("CleanupStatus = %q, want clean", item.CleanupStatus)
+	}
+	if item.Branch != "polecat/obsidian/gt-123" {
+		t.Fatalf("Branch = %q, want manager branch", item.Branch)
+	}
+	if item.Disposition.Verdict != polecat.WorkstateVerdictSafeToNuke || !item.Disposition.Reusable || item.Disposition.CountsTowardCapacity {
+		t.Fatalf("Disposition = %+v, want safe reusable non-capacity", item.Disposition)
+	}
+}
+
+func TestShouldApplyCanonicalPolecatInventoryDispositionKeepsProtectedAgentState(t *testing.T) {
+	fields := &beads.AgentFields{AgentState: string(beads.AgentStatePaused)}
+	if shouldApplyCanonicalPolecatInventoryDisposition(fields, polecatActiveWorkEvidence{}) {
+		t.Fatal("paused agent state should keep inventory fail-closed disposition")
+	}
+	if shouldApplyCanonicalPolecatInventoryDisposition(&beads.AgentFields{AgentState: string(beads.AgentStateIdle)}, polecatActiveWorkEvidence{BlocksCleanup: true}) {
+		t.Fatal("active work evidence should keep inventory fail-closed disposition")
 	}
 }
 

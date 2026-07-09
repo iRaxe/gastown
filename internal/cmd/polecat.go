@@ -492,6 +492,7 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 
 	for _, r := range rigs {
 		bd := beads.New(r.Path)
+		mgr := polecat.NewManager(r, git.NewGit(r.Path), t)
 
 		polecatNames, err := listPolecatDirectoryNames(r.Path)
 		if err != nil {
@@ -514,9 +515,12 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 		for _, name := range polecatNames {
 			agentBeadID := polecatBeadIDForRig(r, r.Name, name)
 			fields := parsePolecatAgentFields(agents[agentBeadID])
-			item := buildPolecatInventoryItem(r.Name, name, fields, activeWork[name], sessions)
+			activeWorkEvidence := assessPolecatAssignedIssueWork(activeWork[name])
+			item := buildPolecatInventoryItemFromEvidence(r.Name, name, fields, activeWorkEvidence, sessions)
 			if activeWorkErr != nil {
 				item = buildPolecatInventoryItemFromEvidence(r.Name, name, fields, polecatActiveWorkLookupError(activeWorkErr), sessions)
+			} else if shouldApplyCanonicalPolecatInventoryDisposition(fields, activeWorkEvidence) {
+				applyCanonicalPolecatInventoryDisposition(&item, mgr.WorkstateInputForPolecat(name, item.State, item.Issue))
 			}
 			disposition := item.Disposition
 			state := effectivePolecatState(PolecatListItem{

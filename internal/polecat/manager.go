@@ -2290,6 +2290,12 @@ func (m *Manager) WorkstateDispositionForPolecat(name string, state State, issue
 	return DecideWorkstate(m.workstateInputForPolecat(name, state, issue))
 }
 
+// WorkstateInputForPolecat exposes the gathered lifecycle, git, and MQ facts so
+// callers that render inventory can share the same evidence as recovery checks.
+func (m *Manager) WorkstateInputForPolecat(name string, state State, issue string) WorkstateInput {
+	return m.workstateInputForPolecat(name, state, issue)
+}
+
 func (m *Manager) reuseDecisionForPolecat(name string, state State) SlotReuseDecision {
 	d := m.WorkstateDispositionForPolecat(name, state, "")
 	return SlotReuseDecision{Reusable: d.Reusable, Reason: d.Reason}

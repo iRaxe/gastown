@@ -138,6 +138,27 @@ func buildPolecatInventoryItemFromEvidence(rigName, polecatName string, fields *
 	return item
 }
 
+func shouldApplyCanonicalPolecatInventoryDisposition(fields *beads.AgentFields, activeWorkEvidence polecatActiveWorkEvidence) bool {
+	if activeWorkEvidence.BlocksCleanup {
+		return false
+	}
+	if fields == nil {
+		return true
+	}
+	state := beads.AgentState(strings.TrimSpace(fields.AgentState))
+	return !assessPolecatAgentStateWork(state).BlocksCleanup
+}
+
+func applyCanonicalPolecatInventoryDisposition(item *polecatInventoryItem, input polecat.WorkstateInput) {
+	if item == nil {
+		return
+	}
+	item.CleanupStatus = string(input.CleanupStatus)
+	item.ActiveMR = strings.TrimSpace(input.ActiveMR)
+	item.Branch = strings.TrimSpace(input.Branch)
+	item.Disposition = polecat.DecideWorkstate(input)
+}
+
 var polecatSummaryWorkStatuses = []beads.IssueStatus{
 	beads.IssueStatusHooked,
 	beads.StatusInProgress,
