@@ -163,18 +163,40 @@ func (dm *dogMol) closeRemainingSteps() {
 		return
 	}
 
-	closed := 0
+	remaining := make([]childInfo, 0, len(children))
 	for _, child := range children {
 		if child.ID == "" || child.Status == "" {
 			continue
 		}
-		// Close any child that is still open/hooked/in_progress.
 		if child.Status == "open" || child.Status == "hooked" || child.Status == "in_progress" {
+			remaining = append(remaining, child)
+		}
+	}
+
+	closed := 0
+	lastErrs := make(map[string]error)
+	for pass := 0; len(remaining) > 0 && pass < len(children); pass++ {
+		progress := false
+		next := make([]childInfo, 0, len(remaining))
+		for _, child := range remaining {
 			if err := dm.closeWisp(child.ID); err != nil {
-				dm.logger.Printf("dog_molecule: closeRemainingSteps: close %s failed after %d attempts: %v", child.ID, dogCloseMaxAttempts, err)
+				lastErrs[child.ID] = err
+				next = append(next, child)
 			} else {
+				delete(lastErrs, child.ID)
 				closed++
+				progress = true
 			}
+		}
+		remaining = next
+		if !progress {
+			break
+		}
+	}
+
+	for _, child := range remaining {
+		if err := lastErrs[child.ID]; err != nil {
+			dm.logger.Printf("dog_molecule: closeRemainingSteps: close %s failed after %d attempts: %v", child.ID, dogCloseMaxAttempts, err)
 		}
 	}
 	if closed > 0 {

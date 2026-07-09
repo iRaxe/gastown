@@ -1,6 +1,21 @@
 package daemon
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+type testLogger struct {
+	t *testing.T
+}
+
+func (l testLogger) Printf(format string, args ...interface{}) {
+	l.t.Helper()
+	l.t.Logf(format, args...)
+}
 
 func TestParseWispID(t *testing.T) {
 	tests := []struct {
@@ -138,4 +153,90 @@ func TestDogMolGracefulDegradation(t *testing.T) {
 	dm.closeStep("scan")
 	dm.failStep("scan", "test failure")
 	dm.close()
+}
+
+func TestCloseRemainingStepsRetriesDependencyBlockedChildren(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "closed.txt")
+	bdPath := filepath.Join(dir, "bd")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+
+state="${FAKE_BD_STATE:?}"
+
+if [[ "$1" == "show" ]]; then
+  cat <<'JSON'
+{"hq-wisp-root":[
+  {"id":"report","title":"Report findings and return to kennel","status":"open"},
+  {"id":"auto","title":"Auto-close stale issues","status":"open"},
+  {"id":"reap","title":"Reap stale wisps","status":"open"},
+  {"id":"scan","title":"Scan databases for reaper candidates","status":"open"}
+],"schema_version":1}
+JSON
+  exit 0
+fi
+
+if [[ "$1" == "close" ]]; then
+  id="$2"
+  touch "$state"
+
+  has_closed() {
+    grep -qx "$1" "$state"
+  }
+
+  mark_closed() {
+    has_closed "$1" || echo "$1" >> "$state"
+  }
+
+  case "$id" in
+    scan)
+      mark_closed scan
+      ;;
+    reap)
+      has_closed scan || { echo "cannot close reap: blocked by open issues [scan]" >&2; exit 1; }
+      mark_closed reap
+      ;;
+    auto)
+      has_closed reap || { echo "cannot close auto: blocked by open issues [reap]" >&2; exit 1; }
+      mark_closed auto
+      ;;
+    report)
+      has_closed auto || { echo "cannot close report: blocked by open issues [auto]" >&2; exit 1; }
+      mark_closed report
+      ;;
+    *)
+      echo "unexpected close $id" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+
+echo "unexpected command $*" >&2
+exit 1
+`
+	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_BD_STATE", statePath)
+
+	dm := &dogMol{
+		rootID:   "hq-wisp-root",
+		bdPath:   bdPath,
+		townRoot: dir,
+		logger:   testLogger{t: t},
+	}
+
+	dm.closeRemainingSteps()
+
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Fields(string(data))
+	sort.Strings(got)
+	want := []string{"auto", "reap", "report", "scan"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("closed steps = %v, want %v", got, want)
+	}
 }
