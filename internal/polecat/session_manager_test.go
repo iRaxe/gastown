@@ -167,6 +167,57 @@ func TestIsRunningNoSession(t *testing.T) {
 	}
 }
 
+func TestSessionManagerStatusPreservesTmuxTimestampInstantsInNonUTCZone(t *testing.T) {
+	requireTmux(t)
+
+	oldLocal := time.Local
+	time.Local = time.FixedZone("CEST", 2*60*60)
+	t.Cleanup(func() { time.Local = oldLocal })
+
+	reg := session.NewPrefixRegistry()
+	reg.Register("tz", "timezone-test-rig")
+	oldRegistry := session.DefaultRegistry()
+	session.SetDefaultRegistry(reg)
+	t.Cleanup(func() { session.SetDefaultRegistry(oldRegistry) })
+
+	tm := tmux.NewTmux()
+	polecatName := fmt.Sprintf("timestamp-%d", testSessionCounter.Add(1))
+	r := &rig.Rig{Name: "timezone-test-rig", Polecats: []string{polecatName}}
+	m := NewSessionManager(tm, r)
+	sessionID := m.SessionName(polecatName)
+
+	_ = tm.KillSession(sessionID)
+	if err := tm.NewSession(sessionID, ""); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() { _ = tm.KillSession(sessionID) })
+
+	wantCreated, err := tm.GetSessionCreatedTime(sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionCreatedTime: %v", err)
+	}
+	rawInfo, err := tm.GetSessionInfo(sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionInfo: %v", err)
+	}
+	var activityUnix int64
+	if _, err := fmt.Sscanf(rawInfo.Activity, "%d", &activityUnix); err != nil {
+		t.Fatalf("parse session activity %q: %v", rawInfo.Activity, err)
+	}
+	wantActivity := time.Unix(activityUnix, 0)
+
+	info, err := m.Status(polecatName)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !info.Created.Equal(wantCreated) {
+		t.Errorf("Created = %s, want tmux instant %s", info.Created.Format(time.RFC3339), wantCreated.Format(time.RFC3339))
+	}
+	if !info.LastActivity.Equal(wantActivity) {
+		t.Errorf("LastActivity = %s, want tmux instant %s", info.LastActivity.Format(time.RFC3339), wantActivity.Format(time.RFC3339))
+	}
+}
+
 func TestSessionManagerListEmpty(t *testing.T) {
 	requireTmux(t)
 

@@ -693,6 +693,7 @@ func (m *SessionManager) Status(polecat string) (*SessionInfo, error) {
 
 	if tmuxInfo.Created != "" {
 		formats := []string{
+			time.RFC3339,
 			"2006-01-02 15:04:05",
 			"Mon Jan 2 15:04:05 2006",
 			"Mon Jan _2 15:04:05 2006",

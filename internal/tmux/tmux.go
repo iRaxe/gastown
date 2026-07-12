@@ -3298,11 +3298,11 @@ func (t *Tmux) GetSessionInfo(name string) (*SessionInfo, error) {
 	windows := 0
 	_, _ = fmt.Sscanf(parts[1], "%d", &windows) // non-fatal: defaults to 0 on parse error
 
-	// Convert unix timestamp to formatted string for consumers.
+	// Convert unix timestamp to an unambiguous formatted string for consumers.
 	created := parts[2]
 	var createdUnix int64
 	if _, err := fmt.Sscanf(created, "%d", &createdUnix); err == nil && createdUnix > 0 {
-		created = time.Unix(createdUnix, 0).Format("2006-01-02 15:04:05")
+		created = time.Unix(createdUnix, 0).Format(time.RFC3339)
 	}
 
 	info := &SessionInfo{
