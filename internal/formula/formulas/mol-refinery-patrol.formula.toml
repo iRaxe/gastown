@@ -1184,7 +1184,8 @@ If context is ACCEPTABLE (< 70% consumed, RSS < 1 GB, session < 8h):
 If context is HIGH (≥ 70% consumed, or RSS ≥ 1 GB, or session ≥ 8h):
 - Hand off immediately:
   ```bash
-  gt patrol report --summary "context-yield handoff: <RSS>MB, <age>h"
+  gt patrol report --summary "context-yield handoff: <RSS>MB, <age>h" \
+    --steps "inbox-check:SKIP,queue-scan:SKIP,process-branch:SKIP,run-tests:SKIP,quality-review:SKIP,handle-failures:SKIP,merge-push:SKIP,loop-check:SKIP,generate-summary:SKIP,check-integration-branches:SKIP,context-check:OK,patrol-cleanup:SKIP,burn-or-loop:OK"
   gt handoff -s "Refinery context-yield handoff" -m "Yield after <age>h. Queue: <state>."
   ```
 
@@ -1209,12 +1210,16 @@ Mark skipped steps as SKIP in the patrol report.
 After await-event returns (either by event, timeout, or context-yield):
 1. **Re-assess session health** (check RSS, context, age again — conditions change)
 2. If reason is `context-yield` and context is acceptable: re-enter await-event (skip steps 3-4)
-3. Close current patrol and start next cycle:
+3. Build a step audit with all 13 step IDs, marking each actual result OK or SKIP.
+4. Close current patrol and start next cycle:
 ```bash
-gt patrol report --summary "<brief summary: branches merged, test results, queue state>"
+gt patrol report --summary "<brief summary: branches merged, test results, queue state>" \
+  --steps "inbox-check:OK,queue-scan:OK,process-branch:SKIP,run-tests:SKIP,quality-review:SKIP,handle-failures:SKIP,merge-push:SKIP,loop-check:OK,generate-summary:SKIP,check-integration-branches:OK,context-check:OK,patrol-cleanup:OK,burn-or-loop:OK"
 ```
+The --steps flag is REQUIRED. Replace the example statuses with the actual
+result for every step; never omit a step or report an untracked cycle.
 This closes the current patrol wisp and automatically creates a new one.
-4. Continue executing from the first step of the new patrol cycle
+5. Continue executing from the first step of the new patrol cycle
 
 **If you decide to hand off:**
 

@@ -295,10 +295,9 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 		return "", fmt.Errorf("proto %s not found in catalog", cfg.PatrolMolName)
 	}
 
-	// Create the patrol wisp (root only — steps are read inline at prime time,
-	// not tracked as individual DB rows). Child wisps are reserved for pour=true
-	// formulas like releases where checkpoint recovery matters.
-	spawnArgs := []string{"mol", "wisp", "create", protoID, "--root-only", "--actor", cfg.RoleName}
+	// Create the patrol wisp with its step children materialized so molecule
+	// status and progress report the same workflow that the agent executes.
+	spawnArgs := []string{"mol", "wisp", "create", protoID, "--actor", cfg.RoleName}
 	for _, v := range cfg.ExtraVars {
 		spawnArgs = append(spawnArgs, "--var", v)
 	}
@@ -345,16 +344,42 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 		return "", fmt.Errorf("created wisp but could not parse ID from output")
 	}
 
+	// A patrol root is both the hooked work bead and the molecule root. Record
+	// that self-attachment explicitly so hook, molecule status, prime, and
+	// progress all resolve the same workflow.
+	if err := storeFieldsInBeadFromTownRoot(cfg.BeadsDir, patrolID, beadFieldUpdates{
+		AttachedMolecule: patrolID,
+		AttachedFormula:  cfg.PatrolMolName,
+		Vars:             cfg.ExtraVars,
+	}); err != nil {
+		return "", rollbackPatrolSpawn(cfg, patrolID,
+			fmt.Errorf("created wisp %s but failed to attach patrol workflow: %w", patrolID, err))
+	}
+
 	// Hook the wisp to the agent so gt mol status sees it
 	if err := BdCmd("update", patrolID, "--status=hooked", "--assignee="+cfg.Assignee).
 		WithAutoCommit().
 		WithBeadsDir(resolvedBeadsDir).
 		Dir(cfg.BeadsDir).
 		Run(); err != nil {
-		return patrolID, fmt.Errorf("created wisp %s but failed to hook", patrolID)
+		return "", rollbackPatrolSpawn(cfg, patrolID,
+			fmt.Errorf("created wisp %s but failed to hook: %w", patrolID, err))
 	}
 
 	return patrolID, nil
+}
+
+func rollbackPatrolSpawn(cfg PatrolConfig, patrolID string, cause error) error {
+	b := cfg.Beads
+	if b == nil {
+		b = beads.New(cfg.BeadsDir)
+	}
+	_, descendantsErr := forceClosePatrolSteps(b, patrolID)
+	rootErr := b.ForceCloseWithReason("rollback: incomplete patrol spawn", patrolID)
+	if descendantsErr != nil || rootErr != nil {
+		return errors.Join(cause, descendantsErr, rootErr)
+	}
+	return cause
 }
 
 // outputPatrolContext is the main function that handles patrol display logic.

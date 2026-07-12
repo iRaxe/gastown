@@ -11,7 +11,57 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 )
+
+func TestForceCloseDescendantsIncludesEphemeralChildren(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd script uses POSIX shell")
+	}
+
+	binDir := t.TempDir()
+	commandLog := filepath.Join(t.TempDir(), "bd.log")
+	bdScript := `#!/bin/sh
+printf '%s\n' "$*" >> "$BD_LOG"
+case "$*" in
+	  *"list --json"*"--parent=hq-wisp-step"*|*"query --json"*"parent=\"hq-wisp-step\""*)
+	    printf '%s\n' 'patrol close must not scan grandchildren' >&2
+	    exit 1
+	    ;;
+	  *"list --json"*"--parent=hq-wisp-patrol"*)
+	    printf '%s\n' '[]'
+	    ;;
+  *"query --json"*"parent=\"hq-wisp-patrol\""*)
+    printf '%s\n' '[{"id":"hq-wisp-step","title":"inbox-check","status":"open","parent":"hq-wisp-patrol","ephemeral":true}]'
+    ;;
+  *)
+    printf '%s\n' '[]'
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_LOG", commandLog)
+	beads.ResetBdAllowStaleCacheForTest()
+	t.Cleanup(beads.ResetBdAllowStaleCacheForTest)
+
+	closed, err := forceClosePatrolSteps(beads.New(t.TempDir()), "hq-wisp-patrol")
+	if err != nil {
+		t.Fatalf("forceClosePatrolSteps: %v", err)
+	}
+	if closed != 1 {
+		t.Fatalf("closed = %d, want one ephemeral child", closed)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if !strings.Contains(string(commands), "close hq-wisp-step") {
+		t.Fatalf("ephemeral child was not closed:\n%s", commands)
+	}
+}
 
 // TestExtractRoleFromIdentity verifies that role names are correctly extracted
 // from agent identity strings, including trailing slashes and compound paths.

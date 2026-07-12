@@ -127,12 +127,16 @@ Mark skipped steps as SKIP in the patrol report.
 
 After await-signal returns (either by signal or timeout):
 1. Generate a brief summary of this patrol cycle's observations
-2. Close current patrol and start next cycle:
+2. Build a step audit with all 9 step IDs, marking each actual result OK or SKIP.
+3. Close current patrol and start next cycle:
 ```bash
-gt patrol report --summary "<brief summary of patrol observations>"
+gt patrol report --summary "<brief summary of patrol observations>" \
+  --steps "inbox-check:OK,process-cleanups:SKIP,check-refinery:OK,survey-workers:OK,check-timer-gates:SKIP,check-swarm-completion:SKIP,patrol-cleanup:SKIP,context-check:OK,loop-or-exit:OK"
 ```
+The --steps flag is REQUIRED. Replace the example statuses with the actual
+result for every step; never omit a step or report an untracked cycle.
 This closes the current patrol wisp and automatically creates a new one.
-3. Continue executing from the first step of the new patrol cycle
+4. Continue executing from the first step of the new patrol cycle
 
 **If context HIGH** (approaching limit):
 1. Write handoff mail with notable observations:

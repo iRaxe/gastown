@@ -375,11 +375,31 @@ func forceCloseDescendants(b *beads.Beads, parentID string) (int, error) {
 	return closeDescendantsImpl(b, parentID, true)
 }
 
+// forceClosePatrolSteps closes the flat step set created from patrol formulas.
+// Formula steps are all direct children of the patrol root; avoiding recursive
+// grandchild probes keeps each report to one cross-table listing plus one close.
+func forceClosePatrolSteps(b *beads.Beads, parentID string) (int, error) {
+	children, err := listChildrenAcrossTables(b, parentID)
+	if err != nil {
+		return 0, fmt.Errorf("listing patrol steps of %s: %w", parentID, err)
+	}
+	idsToClose := make([]string, 0, len(children))
+	for _, child := range children {
+		if child.Status != "closed" {
+			idsToClose = append(idsToClose, child.ID)
+		}
+	}
+	if len(idsToClose) == 0 {
+		return 0, nil
+	}
+	if err := b.ForceCloseWithReason("burned: force-close patrol steps", idsToClose...); err != nil {
+		return 0, fmt.Errorf("closing patrol steps of %s: %w", parentID, err)
+	}
+	return len(idsToClose), nil
+}
+
 func closeDescendantsImpl(b *beads.Beads, parentID string, force bool) (int, error) {
-	children, err := b.List(beads.ListOptions{
-		Parent: parentID,
-		Status: "all",
-	})
+	children, err := listChildrenAcrossTables(b, parentID)
 	if err != nil {
 		return 0, fmt.Errorf("listing children of %s: %w", parentID, err)
 	}

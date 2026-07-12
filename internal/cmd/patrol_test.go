@@ -5,6 +5,49 @@ import (
 	"testing"
 )
 
+const deaconPatrolAllOK = "heartbeat:OK,inbox-check:OK,orphan-process-cleanup:OK,test-pollution-cleanup:OK,gate-evaluation:OK,dispatch-gated-molecules:OK,check-convoy-completion:OK,resolve-external-deps:OK,fire-notifications:OK,heartbeat-mid:OK,health-scan:OK,dolt-health:OK,zombie-scan:OK,plugin-run:OK,dog-pool-maintenance:OK,dog-health-check:OK,orphan-check:OK,session-gc:OK,wisp-compact:OK,compact-report:OK,costs-digest:OK,patrol-digest:OK,log-maintenance:OK,patrol-cleanup:OK,context-check:OK,loop-or-exit:OK"
+
+func TestRunPatrolReportRejectsMissingStepAudit(t *testing.T) {
+	oldSummary, oldSteps := patrolReportSummary, patrolReportSteps
+	t.Cleanup(func() {
+		patrolReportSummary, patrolReportSteps = oldSummary, oldSteps
+	})
+	patrolReportSummary = "all clear"
+	patrolReportSteps = ""
+
+	err := runPatrolReport(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "--steps is required") {
+		t.Fatalf("error = %v, want required step audit", err)
+	}
+}
+
+func TestValidateStepAuditRequiresExactCanonicalSteps(t *testing.T) {
+	validWitness := "inbox-check:OK,process-cleanups:SKIP,check-refinery:OK,survey-workers:OK,check-timer-gates:SKIP,check-swarm-completion:SKIP,patrol-cleanup:OK,context-check:OK,loop-or-exit:OK"
+	tests := []struct {
+		name  string
+		steps string
+		want  string
+	}{
+		{name: "valid", steps: validWitness},
+		{name: "missing", steps: "inbox-check:OK,loop-or-exit:OK", want: "missing step"},
+		{name: "unknown", steps: validWitness + ",not-a-step:OK", want: "unknown step"},
+		{name: "duplicate", steps: validWitness + ",inbox-check:OK", want: "duplicate step"},
+		{name: "invalid status", steps: strings.Replace(validWitness, "inbox-check:OK", "inbox-check:MAYBE", 1), want: "invalid status"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateStepAudit("mol-witness-patrol", tt.steps)
+			if tt.want == "" && err != nil {
+				t.Fatalf("validateStepAudit: %v", err)
+			}
+			if tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractPatrolRole(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -188,7 +231,7 @@ func TestBuildStepAudit(t *testing.T) {
 		{
 			name:        "deacon patrol with all steps OK",
 			formulaName: "mol-deacon-patrol",
-			stepsFlag:   "heartbeat:OK,inbox-check:OK,orphan-process-cleanup:OK,test-pollution-cleanup:OK,gate-evaluation:OK,dispatch-gated-molecules:OK,check-convoy-completion:OK,resolve-external-deps:OK,fire-notifications:OK,heartbeat-mid:OK,health-scan:OK,dolt-health:OK,zombie-scan:OK,plugin-run:OK,dog-pool-maintenance:OK,dog-health-check:OK,orphan-check:OK,session-gc:OK,wisp-compact:OK,compact-report:OK,costs-digest:OK,patrol-digest:OK,log-maintenance:OK,patrol-cleanup:OK,context-check:OK,loop-or-exit:OK",
+			stepsFlag:   deaconPatrolAllOK,
 			wantPrefix:  "Steps:",
 			wantSuffix:  "(26/26)",
 			wantContain: "heartbeat OK",

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -31,9 +30,8 @@ The summary is stored on the patrol root wisp for audit purposes.
 The --steps flag records which patrol steps were executed vs skipped,
 making shortcutting visible in the ledger.
 
-Examples:
-  gt patrol report --summary "All clear, no issues" --steps "heartbeat:OK,inbox-check:OK,health-scan:OK"
-  gt patrol report --summary "Dolt latency elevated, filed escalation"`,
+Example shape (replace the audit with every step shown by gt prime):
+	gt patrol report --summary "All clear" --steps "<step-1>:OK,<step-2>:SKIP,..."`,
 	RunE: runPatrolReport,
 }
 
@@ -41,9 +39,14 @@ func init() {
 	patrolReportCmd.Flags().StringVar(&patrolReportSummary, "summary", "", "Brief summary of patrol observations (required)")
 	patrolReportCmd.Flags().StringVar(&patrolReportSteps, "steps", "", "Step audit: comma-separated step:STATUS pairs (e.g., heartbeat:OK,inbox-check:OK)")
 	_ = patrolReportCmd.MarkFlagRequired("summary")
+	_ = patrolReportCmd.MarkFlagRequired("steps")
 }
 
 func runPatrolReport(cmd *cobra.Command, args []string) error {
+	if strings.TrimSpace(patrolReportSteps) == "" {
+		return fmt.Errorf("--steps is required: report every patrol step as step_id:OK or step_id:SKIP")
+	}
+
 	// Resolve role
 	roleInfo, err := GetRole()
 	if err != nil {
@@ -80,6 +83,9 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	default:
 		return fmt.Errorf("unsupported role for patrol report: %q", roleName)
 	}
+	if err := validateStepAudit(cfg.PatrolMolName, patrolReportSteps); err != nil {
+		return err
+	}
 
 	// Find the active patrol
 	patrolID, _, hasPatrol, findErr := findActivePatrol(cfg)
@@ -98,45 +104,93 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 
 	// Update the description with the patrol summary and step audit
 	desc := fmt.Sprintf("Patrol report: %s\n\n%s", patrolReportSummary, stepAudit)
+	currentRoot, err := b.Show(patrolID)
+	if err != nil {
+		return fmt.Errorf("loading current patrol %s before audit persistence: %w", patrolID, err)
+	}
+	if attachment := beads.ParseAttachmentFields(currentRoot); attachment != nil {
+		desc = beads.SetAttachmentFields(&beads.Issue{Description: desc}, attachment)
+	}
 	if err := b.Update(patrolID, beads.UpdateOptions{
 		Description: &desc,
 	}); err != nil {
-		style.PrintWarning("could not update patrol summary: %v", err)
+		return fmt.Errorf("persisting patrol summary and step audit: %w", err)
 	}
 
 	// Print the step audit for visibility
 	fmt.Println(stepAudit)
 
-	// Close all descendant wisps first (recursive), then the patrol root.
-	// Without this, every patrol cycle leaks ~10 orphan wisps into the DB.
-	// If descendants can't be closed, abort so patrol retries next cycle (gt-7lx3).
-	closed, closeDescErr := forceCloseDescendants(b, patrolID)
-	if closeDescErr != nil {
-		return fmt.Errorf("closing descendants of patrol %s (closed %d): %w", patrolID, closed, closeDescErr)
-	}
-
-	// Close the patrol root
-	if err := b.ForceCloseWithReason("patrol cycle complete: "+patrolReportSummary, patrolID); err != nil {
-		return fmt.Errorf("closing patrol %s: %w", patrolID, err)
-	}
-
-	fmt.Printf("%s Closed patrol %s\n", style.Success.Render("✓"), patrolID)
-
-	// Start next cycle
+	// Create and hook the successor before closing the current patrol. The current
+	// root is exempt from pre-spawn cleanup, so a spawn failure leaves a usable
+	// hook that can retry instead of creating a patrol gap.
 	spawnCfg := cfg
 	spawnCfg.BurnExemptIDs = append(spawnCfg.BurnExemptIDs, patrolID)
 	newPatrolID, err := autoSpawnPatrol(spawnCfg)
 	if err != nil {
-		if newPatrolID != "" {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", err.Error())
-			fmt.Printf("New patrol: %s\n", newPatrolID)
-			return nil
-		}
-		fmt.Fprintf(os.Stderr, "warning: patrol %s was closed, but starting next patrol cycle failed: %s\n", patrolID, err.Error())
-		return nil
+		return fmt.Errorf("starting next patrol cycle; current patrol %s remains active: %w", patrolID, err)
 	}
 
+	// Close all materialized patrol steps, then the reported root. If either
+	// close fails, roll back the successor so the current patrol remains the
+	// single authoritative cycle and can retry safely.
+	closed, closeDescErr := forceClosePatrolSteps(b, patrolID)
+	if closeDescErr != nil {
+		return rollbackPatrolSpawn(spawnCfg, newPatrolID,
+			fmt.Errorf("closing steps of patrol %s (closed %d): %w", patrolID, closed, closeDescErr))
+	}
+
+	// Close the patrol root
+	if err := b.ForceCloseWithReason("patrol cycle complete: "+patrolReportSummary, patrolID); err != nil {
+		return fmt.Errorf("successor %s remains active after failing to retire patrol %s: %w", newPatrolID, patrolID, err)
+	}
+
+	fmt.Printf("%s Closed patrol %s\n", style.Success.Render("✓"), patrolID)
 	fmt.Printf("%s Started new patrol: %s\n", style.Success.Render("✓"), newPatrolID)
+	return nil
+}
+
+func validateStepAudit(formulaName, stepsFlag string) error {
+	content, err := formula.GetEmbeddedFormulaContent(formulaName)
+	if err != nil {
+		return fmt.Errorf("validating --steps: loading formula %s: %w", formulaName, err)
+	}
+	f, err := formula.Parse(content)
+	if err != nil {
+		return fmt.Errorf("validating --steps: parsing formula %s: %w", formulaName, err)
+	}
+
+	canonical := f.GetAllIDs()
+	known := make(map[string]bool, len(canonical))
+	for _, stepID := range canonical {
+		known[stepID] = true
+	}
+
+	seen := make(map[string]bool, len(canonical))
+	for _, entry := range strings.Split(stepsFlag, ",") {
+		parts := strings.SplitN(strings.TrimSpace(entry), ":", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return fmt.Errorf("invalid --steps entry %q: expected step_id:OK or step_id:SKIP", entry)
+		}
+		stepID := strings.TrimSpace(parts[0])
+		status := strings.ToUpper(strings.TrimSpace(parts[1]))
+		if !known[stepID] {
+			return fmt.Errorf("unknown step %q in --steps for %s", stepID, formulaName)
+		}
+		if seen[stepID] {
+			return fmt.Errorf("duplicate step %q in --steps", stepID)
+		}
+		if status != "OK" && status != "SKIP" &&
+			!(strings.HasPrefix(status, "OK(") && strings.HasSuffix(status, ")")) &&
+			!(strings.HasPrefix(status, "SKIP(") && strings.HasSuffix(status, ")")) {
+			return fmt.Errorf("invalid status %q for step %q: use OK or SKIP", status, stepID)
+		}
+		seen[stepID] = true
+	}
+	for _, stepID := range canonical {
+		if !seen[stepID] {
+			return fmt.Errorf("missing step %q in --steps for %s", stepID, formulaName)
+		}
+	}
 	return nil
 }
 

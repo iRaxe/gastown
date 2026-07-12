@@ -112,11 +112,68 @@ func TestPatrolFormulasHaveReportCycle(t *testing.T) {
 				t.Fatalf("%s: %s step not found or has empty description", pf.name, pf.loopStepID)
 			}
 
-			// The loop step must use gt patrol report to close current and start next cycle
+			// The loop step must use gt patrol report to close current and start next cycle.
 			if !strings.Contains(loopDesc, "gt patrol report") {
 				t.Errorf("%s %s step missing \"gt patrol report\" (close current patrol and start next cycle)\n"+
 					"All patrol formulas must use gt patrol report in their loop step.",
 					pf.name, pf.loopStepID)
+			}
+
+			// Every report command must include a step audit. Without --steps,
+			// patrol history records NOT REPORTED (?/N) even when the cycle ran.
+			commandCount := 0
+			allStepIDs := f.GetAllIDs()
+			lines := strings.Split(loopDesc, "\n")
+			for i, line := range lines {
+				if !strings.HasPrefix(strings.TrimSpace(line), "gt patrol report ") {
+					continue
+				}
+				commandCount++
+				command := line
+				for j := i + 1; j < len(lines) && j <= i+3 && !strings.Contains(lines[j], "```"); j++ {
+					command += "\n" + lines[j]
+				}
+				if !strings.Contains(command, "--steps") {
+					t.Errorf("%s %s patrol report command %d missing required --steps audit",
+						pf.name, pf.loopStepID, commandCount)
+					continue
+				}
+
+				afterSteps := strings.SplitN(command, "--steps", 2)[1]
+				quoteStart := strings.Index(afterSteps, "\"")
+				if quoteStart < 0 {
+					t.Errorf("%s %s patrol report command %d has unquoted --steps audit",
+						pf.name, pf.loopStepID, commandCount)
+					continue
+				}
+				afterQuote := afterSteps[quoteStart+1:]
+				quoteEnd := strings.Index(afterQuote, "\"")
+				if quoteEnd < 0 {
+					t.Errorf("%s %s patrol report command %d has unterminated --steps audit",
+						pf.name, pf.loopStepID, commandCount)
+					continue
+				}
+
+				reportedIDs := make(map[string]bool)
+				for _, pair := range strings.Split(afterQuote[:quoteEnd], ",") {
+					parts := strings.SplitN(strings.TrimSpace(pair), ":", 2)
+					if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+						t.Errorf("%s %s patrol report command %d has invalid step pair %q",
+							pf.name, pf.loopStepID, commandCount, pair)
+						continue
+					}
+					reportedIDs[parts[0]] = true
+				}
+				if len(reportedIDs) != len(allStepIDs) {
+					t.Errorf("%s %s patrol report command %d reports %d unique steps, want %d",
+						pf.name, pf.loopStepID, commandCount, len(reportedIDs), len(allStepIDs))
+				}
+				for _, stepID := range allStepIDs {
+					if !reportedIDs[stepID] {
+						t.Errorf("%s %s patrol report command %d missing step %q",
+							pf.name, pf.loopStepID, commandCount, stepID)
+					}
+				}
 			}
 		})
 	}
