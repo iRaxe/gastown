@@ -61,7 +61,9 @@ case "$*" in
     printf '%s\n' '[{"id":"hq-wisp-step","title":"Inbox","status":"closed","parent":"hq-wisp-root","ephemeral":true},{"id":"hq-wisp-next","title":"Cleanup","status":"open","parent":"hq-wisp-root","ephemeral":true}]'
     ;;
   *"ready --mol hq-wisp-root --json"*)
-    printf '%s\n' '[{"id":"hq-wisp-next","title":"Cleanup","status":"open","parent":"hq-wisp-root","ephemeral":true}]'
+    printf '%s\n' '{"molecule_id":"hq-wisp-root","ready_steps":1,"steps":[{"issue":{"id":"hq-wisp-next","title":"Cleanup","status":"open","parent":"hq-wisp-root","ephemeral":true}}]}'
+    ;;
+  *"update hq-wisp-next --status=pinned --assignee=easycom/witness"*)
     ;;
   *)
     echo "unexpected bd command: $*" >&2
@@ -78,12 +80,17 @@ esac
 	t.Setenv("BEADS_DIR", rigBeads)
 	t.Setenv("TOWN_BEADS", townBeads)
 	t.Setenv("BD_LOG", logPath)
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("GT_ROLE", "")
+	t.Setenv("GT_RIG", "")
+	t.Setenv("GT_POLECAT", "")
 	t.Chdir(witnessRoot)
 	beads.ResetBdAllowStaleCacheForTest()
 	t.Cleanup(beads.ResetBdAllowStaleCacheForTest)
 
 	oldJSON, oldDryRun := moleculeJSON, moleculeStepDryRun
-	moleculeJSON, moleculeStepDryRun = true, false
+	moleculeJSON, moleculeStepDryRun = false, false
 	t.Cleanup(func() {
 		moleculeJSON, moleculeStepDryRun = oldJSON, oldDryRun
 	})
@@ -102,6 +109,9 @@ esac
 	}
 	if !strings.Contains(logText, "query --json ephemeral=true AND parent=\"hq-wisp-root\"") {
 		t.Fatalf("ephemeral successors were not queried:\n%s", logText)
+	}
+	if !strings.Contains(logText, townBeads+"|update hq-wisp-next --status=pinned --assignee=easycom/witness") {
+		t.Fatalf("successor pin did not use owning HQ database:\n%s", logText)
 	}
 }
 

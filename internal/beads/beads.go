@@ -1458,11 +1458,43 @@ func (b *Beads) ReadyForMol(moleculeID string) ([]*Issue, error) {
 		return nil, err
 	}
 
-	var issues []*Issue
-	if err := json.Unmarshal(out, &issues); err != nil {
+	issues, err := parseReadyForMolOutput(out)
+	if err != nil {
 		return nil, fmt.Errorf("parsing bd ready --mol output: %w", err)
 	}
+	return issues, nil
+}
 
+// parseReadyForMolOutput accepts both the legacy flat issue array and the
+// current bd molecule envelope. bd 1.1 returns ready issues under steps[].issue
+// together with parallel-group metadata.
+func parseReadyForMolOutput(out []byte) ([]*Issue, error) {
+	trimmed := bytes.TrimSpace(out)
+	if len(trimmed) == 0 {
+		return nil, nil
+	}
+	if trimmed[0] == '[' {
+		var issues []*Issue
+		if err := json.Unmarshal(trimmed, &issues); err != nil {
+			return nil, err
+		}
+		return issues, nil
+	}
+
+	var envelope struct {
+		Steps []struct {
+			Issue *Issue `json:"issue"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(trimmed, &envelope); err != nil {
+		return nil, err
+	}
+	issues := make([]*Issue, 0, len(envelope.Steps))
+	for _, step := range envelope.Steps {
+		if step.Issue != nil {
+			issues = append(issues, step.Issue)
+		}
+	}
 	return issues, nil
 }
 

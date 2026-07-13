@@ -157,6 +157,13 @@ func runMoleculeStepDone(cmd *cobra.Command, args []string) error {
 
 	// JSON output
 	if moleculeJSON {
+		// JSON controls rendering, not lifecycle semantics. Preserve the
+		// continuation mutation while avoiding tmux respawn and human output.
+		if !moleculeStepDryRun && result.Action == "continue" {
+			if err := pinMoleculeNextStep(cwd, townRoot, readySteps[0]); err != nil {
+				return err
+			}
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(result)
@@ -265,39 +272,14 @@ func handleStepContinue(cwd, townRoot string, nextStep *beads.Issue, dryRun bool
 	fmt.Printf("\n%s Next step: %s\n", style.Bold.Render("→"), nextStep.ID)
 	fmt.Printf("  %s\n", nextStep.Title)
 
-	// Detect agent identity
-	roleInfo, err := GetRoleWithContext(cwd, townRoot)
-	if err != nil {
-		return fmt.Errorf("detecting role: %w", err)
-	}
-
-	roleCtx := RoleContext{
-		Role:     roleInfo.Role,
-		Rig:      roleInfo.Rig,
-		Polecat:  roleInfo.Polecat,
-		TownRoot: townRoot,
-		WorkDir:  cwd,
-	}
-	agentID := buildAgentIdentity(roleCtx)
-	if agentID == "" {
-		return fmt.Errorf("cannot determine agent identity (role: %s)", roleCtx.Role)
-	}
-
 	if dryRun {
 		fmt.Printf("\n[dry-run] Would pin next step: %s\n", nextStep.ID)
 		fmt.Printf("[dry-run] Would respawn pane\n")
 		return nil
 	}
 
-	// Pin the next step in its owning database. Patrol steps use hq-* IDs even
-	// when the witness runs under a rig directory.
-	pinnedStatus := "pinned"
-	stepB := beads.New(resolveMoleculeWorkDir(townRoot, cwd, nextStep.ID))
-	if err := stepB.Update(nextStep.ID, beads.UpdateOptions{
-		Status:   &pinnedStatus,
-		Assignee: &agentID,
-	}); err != nil {
-		return fmt.Errorf("pinning next step: %w", err)
+	if err := pinMoleculeNextStep(cwd, townRoot, nextStep); err != nil {
+		return err
 	}
 
 	fmt.Printf("%s Next step pinned: %s\n", style.Bold.Render("📌"), nextStep.ID)
@@ -343,6 +325,38 @@ func handleStepContinue(cwd, townRoot string, nextStep *beads.Issue, dryRun bool
 	}
 
 	return t.RespawnPane(pane, restartCmd)
+}
+
+func pinMoleculeNextStep(cwd, townRoot string, nextStep *beads.Issue) error {
+	// Detect agent identity
+	roleInfo, err := GetRoleWithContext(cwd, townRoot)
+	if err != nil {
+		return fmt.Errorf("detecting role: %w", err)
+	}
+
+	roleCtx := RoleContext{
+		Role:     roleInfo.Role,
+		Rig:      roleInfo.Rig,
+		Polecat:  roleInfo.Polecat,
+		TownRoot: townRoot,
+		WorkDir:  cwd,
+	}
+	agentID := buildAgentIdentity(roleCtx)
+	if agentID == "" {
+		return fmt.Errorf("cannot determine agent identity (role: %s)", roleCtx.Role)
+	}
+
+	// Pin the next step in its owning database. Patrol steps use hq-* IDs even
+	// when the witness runs under a rig directory.
+	pinnedStatus := "pinned"
+	stepB := beads.New(resolveMoleculeWorkDir(townRoot, cwd, nextStep.ID))
+	if err := stepB.Update(nextStep.ID, beads.UpdateOptions{
+		Status:   &pinnedStatus,
+		Assignee: &agentID,
+	}); err != nil {
+		return fmt.Errorf("pinning next step: %w", err)
+	}
+	return nil
 }
 
 // handleParallelSteps handles executing multiple steps concurrently (fan-out pattern).
@@ -437,12 +451,6 @@ func handleMoleculeComplete(cwd, townRoot, moleculeID string, dryRun bool) error
 	}
 	agentID := buildAgentIdentity(roleCtx)
 
-	// Get git root for hook files
-	gitRoot, err := getGitRoot()
-	if err != nil {
-		return fmt.Errorf("finding git root: %w", err)
-	}
-
 	if dryRun {
 		fmt.Printf("[dry-run] Would unpin work for %s\n", agentID)
 		if roleCtx.Role == RoleDog {
@@ -456,18 +464,17 @@ func handleMoleculeComplete(cwd, townRoot, moleculeID string, dryRun bool) error
 	// Unpin the molecule bead (set status to open, will be closed by gt done or manually)
 	workDir, err := findLocalBeadsDir()
 	if err == nil {
+		workDir = resolveMoleculeWorkDir(townRoot, workDir, moleculeID)
 		b := beads.New(workDir)
-		pinnedBeads, err := b.List(beads.ListOptions{
+		pinnedBeads, err := listBeadsAcrossTables(b, beads.ListOptions{
 			Status:   beads.StatusPinned,
 			Assignee: agentID,
 			Priority: -1,
 		})
 		if err == nil && len(pinnedBeads) > 0 {
 			// Unpin by setting status to open
-			unpinCmd := exec.Command("bd", "update", pinnedBeads[0].ID, "--status=open")
-			unpinCmd.Dir = gitRoot
-			unpinCmd.Stderr = os.Stderr
-			if err := unpinCmd.Run(); err != nil {
+			openStatus := "open"
+			if err := b.Update(pinnedBeads[0].ID, beads.UpdateOptions{Status: &openStatus}); err != nil {
 				style.PrintWarning("could not unpin bead: %v", err)
 			} else {
 				fmt.Printf("%s Work unpinned\n", style.Bold.Render("✓"))

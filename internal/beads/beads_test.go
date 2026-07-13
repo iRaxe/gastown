@@ -25,6 +25,28 @@ func TestNew(t *testing.T) {
 	}
 }
 
+func TestParseReadyForMolOutputSupportsCurrentObjectShape(t *testing.T) {
+	out := []byte(`{"molecule_id":"hq-wisp-root","ready_steps":1,"steps":[{"issue":{"id":"hq-wisp-next","title":"Cleanup","status":"open","ephemeral":true}}]}`)
+	issues, err := parseReadyForMolOutput(out)
+	if err != nil {
+		t.Fatalf("parseReadyForMolOutput: %v", err)
+	}
+	if len(issues) != 1 || issues[0].ID != "hq-wisp-next" || !issues[0].Ephemeral {
+		t.Fatalf("issues = %#v, want current ready issue", issues)
+	}
+}
+
+func TestParseReadyForMolOutputSupportsLegacyArrayShape(t *testing.T) {
+	out := []byte(`[{"id":"gt-step.2","title":"Cleanup","status":"open"}]`)
+	issues, err := parseReadyForMolOutput(out)
+	if err != nil {
+		t.Fatalf("parseReadyForMolOutput: %v", err)
+	}
+	if len(issues) != 1 || issues[0].ID != "gt-step.2" {
+		t.Fatalf("issues = %#v, want legacy ready issue", issues)
+	}
+}
+
 // TestListOptions verifies ListOptions defaults.
 func TestListOptions(t *testing.T) {
 	opts := ListOptions{
