@@ -227,6 +227,83 @@ esac
 	}
 }
 
+func TestRunMoleculeCurrentResumesPinnedStepAfterClosedChildGC(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd script uses POSIX shell")
+	}
+
+	townRoot := t.TempDir()
+	for _, dir := range []string{filepath.Join(townRoot, ".beads"), filepath.Join(townRoot, "mayor")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test-town"}`), 0o644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte("{\"prefix\":\"hq-\",\"path\":\".\"}\n"), 0o644); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	binDir := t.TempDir()
+	bdScript := `#!/bin/sh
+case "$*" in
+  *"version"*)
+    printf '%s\n' 'bd version 1.1.0'
+    ;;
+  *"show hq-wisp-patrol --json"*)
+    printf '%s\n' '[{"id":"hq-wisp-patrol","title":"mol-witness-patrol","status":"hooked","assignee":"deacon/","description":"attached_molecule: hq-wisp-patrol\nattached_formula: mol-witness-patrol","ephemeral":true}]'
+    ;;
+  *"query --json"*"status=\"hooked\""*"assignee=\"deacon/\""*)
+    printf '%s\n' '[{"id":"hq-wisp-patrol","title":"mol-witness-patrol","status":"hooked","assignee":"deacon/","description":"attached_molecule: hq-wisp-patrol\nattached_formula: mol-witness-patrol","ephemeral":true}]'
+    ;;
+  *"query --json"*"parent=\"hq-wisp-patrol\""*)
+    printf '%s\n' '[{"id":"hq-wisp-step-3","title":"Check refinery, mayor, and deacon health","status":"pinned","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-4","title":"Inspect all active polecats","status":"open","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-5","title":"Check timer gates for expiration","status":"open","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-6","title":"Check if active swarm is complete","status":"open","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-7","title":"End-of-cycle inbox hygiene","status":"open","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-8","title":"Check own context limit","status":"open","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-9","title":"Loop or exit for respawn","status":"open","parent":"hq-wisp-patrol","ephemeral":true}]'
+    ;;
+  *)
+    printf '%s\n' '[]'
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GT_TOWN_ROOT", townRoot)
+	t.Chdir(townRoot)
+	beads.ResetBdAllowStaleCacheForTest()
+	t.Cleanup(beads.ResetBdAllowStaleCacheForTest)
+
+	oldJSON := moleculeJSON
+	moleculeJSON = true
+	t.Cleanup(func() { moleculeJSON = oldJSON })
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	if err := runMoleculeCurrent(nil, []string{"deacon/"}); err != nil {
+		t.Fatalf("runMoleculeCurrent: %v", err)
+	}
+	_ = w.Close()
+	var output bytes.Buffer
+	_, _ = io.Copy(&output, r)
+
+	for _, want := range []string{
+		`"steps_complete": 2`,
+		`"steps_total": 9`,
+		`"current_step_id": "hq-wisp-step-3"`,
+		`"status": "working"`,
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("output missing %s:\n%s", want, output.String())
+		}
+	}
+}
+
 func TestRunMoleculeProgressRoutesHQEphemeralStepsFromRig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("mock bd script uses POSIX shell")

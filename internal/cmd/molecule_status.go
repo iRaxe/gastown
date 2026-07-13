@@ -1100,7 +1100,7 @@ func runMoleculeCurrent(cmd *cobra.Command, args []string) error {
 
 	// Build set of closed issue IDs and collect open step IDs for dependency checking
 	closedIDs := make(map[string]bool)
-	var inProgressSteps []*beads.Issue
+	var activeSteps []*beads.Issue
 	var openStepIDs []string
 
 	for _, child := range children {
@@ -1108,12 +1108,19 @@ func runMoleculeCurrent(cmd *cobra.Command, args []string) error {
 		case "closed":
 			info.StepsComplete++
 			closedIDs[child.ID] = true
-		case "in_progress":
-			inProgressSteps = append(inProgressSteps, child)
+		case "in_progress", "pinned":
+			activeSteps = append(activeSteps, child)
 		case "open":
 			openStepIDs = append(openStepIDs, child.ID)
 		}
 	}
+	ledgerProgress := &MoleculeProgressInfo{
+		TotalSteps: info.StepsTotal,
+		DoneSteps:  info.StepsComplete,
+	}
+	reconcileActiveFormulaLedger(molRoot, children, ledgerProgress)
+	info.StepsTotal = ledgerProgress.TotalSteps
+	info.StepsComplete = ledgerProgress.DoneSteps
 
 	// Fetch full details for open steps to get dependency info.
 	// bd list doesn't return dependencies, but bd show does.
@@ -1158,11 +1165,11 @@ func runMoleculeCurrent(cmd *cobra.Command, args []string) error {
 	// Determine current step and status
 	if info.StepsComplete == info.StepsTotal && info.StepsTotal > 0 {
 		info.Status = "complete"
-	} else if len(inProgressSteps) > 0 {
-		// First in-progress step is the current one
+	} else if len(activeSteps) > 0 {
+		// First pinned or in-progress step is the current one.
 		info.Status = "working"
-		info.CurrentStepID = inProgressSteps[0].ID
-		info.CurrentStep = inProgressSteps[0].Title
+		info.CurrentStepID = activeSteps[0].ID
+		info.CurrentStep = activeSteps[0].Title
 	} else if len(readySteps) > 0 {
 		// First ready step is the next to work on
 		info.Status = "working"
