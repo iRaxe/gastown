@@ -123,8 +123,17 @@ func runMoleculeStepDone(cmd *cobra.Command, args []string) error {
 		fmt.Printf("[dry-run] Would close step: %s\n", stepID)
 		result.StepClosed = true
 	} else {
-		if err := b.Close(stepID); err != nil {
-			return fmt.Errorf("closing step: %w", err)
+		var closeErr error
+		if step.Status == beads.StatusPinned {
+			// Molecule transitions pin the active step. bd protects pinned issues
+			// from ordinary closure, so the canonical done path must explicitly
+			// override that guard while preserving an audit reason.
+			closeErr = b.ForceCloseWithReason("completed via gt mol step done", stepID)
+		} else {
+			closeErr = b.Close(stepID)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("closing step: %w", closeErr)
 		}
 		result.StepClosed = true
 		fmt.Printf("%s Closed step %s: %s\n", style.Bold.Render("✓"), stepID, step.Title)

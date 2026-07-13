@@ -11,7 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 )
 
-func TestRunMoleculeStepDoneRoutesHQWispMutationFromRig(t *testing.T) {
+func TestRunMoleculeStepDoneRoutesPinnedHQWispMutationFromRig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake bd uses a POSIX shell script")
 	}
@@ -48,9 +48,9 @@ case "$*" in
     ;;
 esac
 [ "$BEADS_DIR" = "$TOWN_BEADS" ] || { echo "wrong database: $BEADS_DIR" >&2; exit 42; }
-case "$*" in
+	case "$*" in
   *"show hq-wisp-step --json"*)
-    printf '%s\n' '[{"id":"hq-wisp-step","title":"Inbox","status":"open","parent":"hq-wisp-root","ephemeral":true}]'
+	printf '%s\n' '[{"id":"hq-wisp-step","title":"Inbox","status":"pinned","parent":"hq-wisp-root","ephemeral":true}]'
     ;;
   *"close hq-wisp-step"*)
     ;;
@@ -90,7 +90,7 @@ esac
 	t.Cleanup(beads.ResetBdAllowStaleCacheForTest)
 
 	oldJSON, oldDryRun := moleculeJSON, moleculeStepDryRun
-	moleculeJSON, moleculeStepDryRun = false, false
+	moleculeJSON, moleculeStepDryRun = true, false
 	t.Cleanup(func() {
 		moleculeJSON, moleculeStepDryRun = oldJSON, oldDryRun
 	})
@@ -104,8 +104,8 @@ esac
 		t.Fatalf("read bd log: %v", err)
 	}
 	logText := string(logBytes)
-	if !strings.Contains(logText, townBeads+"|close hq-wisp-step") {
-		t.Fatalf("close did not use owning HQ database:\n%s", logText)
+	if !strings.Contains(logText, townBeads+"|close hq-wisp-step --reason=completed via gt mol step done --force") {
+		t.Fatalf("pinned close did not use owning HQ database with an audited force override:\n%s", logText)
 	}
 	if !strings.Contains(logText, "query --json ephemeral=true AND parent=\"hq-wisp-root\"") {
 		t.Fatalf("ephemeral successors were not queried:\n%s", logText)
