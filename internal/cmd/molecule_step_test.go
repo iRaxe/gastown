@@ -2,10 +2,108 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
 )
+
+func TestRunMoleculeStepDoneRoutesHQWispMutationFromRig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake bd uses a POSIX shell script")
+	}
+
+	townRoot := t.TempDir()
+	rigRoot := filepath.Join(townRoot, "easycom")
+	witnessRoot := filepath.Join(rigRoot, "witness")
+	townBeads := filepath.Join(townRoot, ".beads")
+	rigBeads := filepath.Join(rigRoot, ".beads")
+	for _, dir := range []string{
+		filepath.Join(townRoot, "mayor"),
+		townBeads,
+		rigBeads,
+		witnessRoot,
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test-town"}`), 0o644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townBeads, "routes.jsonl"), []byte("{\"prefix\":\"hq-\",\"path\":\".\"}\n{\"prefix\":\"ec-\",\"path\":\"easycom\"}\n"), 0o644); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "bd.log")
+	bdScript := `#!/bin/sh
+printf '%s|%s\n' "$BEADS_DIR" "$*" >> "$BD_LOG"
+case "$*" in
+  *"version"*)
+    printf '%s\n' 'bd version 0.65.0'
+    ;;
+esac
+[ "$BEADS_DIR" = "$TOWN_BEADS" ] || { echo "wrong database: $BEADS_DIR" >&2; exit 42; }
+case "$*" in
+  *"show hq-wisp-step --json"*)
+    printf '%s\n' '[{"id":"hq-wisp-step","title":"Inbox","status":"open","parent":"hq-wisp-root","ephemeral":true}]'
+    ;;
+  *"close hq-wisp-step"*)
+    ;;
+  *"list --json"*"--parent=hq-wisp-root"*)
+    printf '%s\n' '[]'
+    ;;
+  *"query --json"*"parent=\"hq-wisp-root\""*)
+    printf '%s\n' '[{"id":"hq-wisp-step","title":"Inbox","status":"closed","parent":"hq-wisp-root","ephemeral":true},{"id":"hq-wisp-next","title":"Cleanup","status":"open","parent":"hq-wisp-root","ephemeral":true}]'
+    ;;
+  *"ready --mol hq-wisp-root --json"*)
+    printf '%s\n' '[{"id":"hq-wisp-next","title":"Cleanup","status":"open","parent":"hq-wisp-root","ephemeral":true}]'
+    ;;
+  *)
+    echo "unexpected bd command: $*" >&2
+    exit 1
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GT_TOWN_ROOT", townRoot)
+	t.Setenv("BEADS_DIR", rigBeads)
+	t.Setenv("TOWN_BEADS", townBeads)
+	t.Setenv("BD_LOG", logPath)
+	t.Chdir(witnessRoot)
+	beads.ResetBdAllowStaleCacheForTest()
+	t.Cleanup(beads.ResetBdAllowStaleCacheForTest)
+
+	oldJSON, oldDryRun := moleculeJSON, moleculeStepDryRun
+	moleculeJSON, moleculeStepDryRun = true, false
+	t.Cleanup(func() {
+		moleculeJSON, moleculeStepDryRun = oldJSON, oldDryRun
+	})
+
+	if err := runMoleculeStepDone(nil, []string{"hq-wisp-step"}); err != nil {
+		t.Fatalf("runMoleculeStepDone: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	logText := string(logBytes)
+	if !strings.Contains(logText, townBeads+"|close hq-wisp-step") {
+		t.Fatalf("close did not use owning HQ database:\n%s", logText)
+	}
+	if !strings.Contains(logText, "query --json ephemeral=true AND parent=\"hq-wisp-root\"") {
+		t.Fatalf("ephemeral successors were not queried:\n%s", logText)
+	}
+}
 
 func TestExtractMoleculeIDFromStep(t *testing.T) {
 	tests := []struct {

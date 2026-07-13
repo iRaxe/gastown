@@ -86,6 +86,12 @@ func runMoleculeStepDone(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
+	// Step IDs may belong to a town-level patrol molecule even when the
+	// caller is a rig-level witness. Reads route by ID inside beads.Show, but
+	// mutations such as Close operate on the wrapper's bound database. Bind
+	// the whole transition to the step's owning database up front so dry-run
+	// and non-dry-run follow the same path.
+	workDir = resolveMoleculeWorkDir(townRoot, workDir, stepID)
 
 	b := beads.New(workDir)
 
@@ -218,11 +224,7 @@ func findAllReadySteps(b *beads.Beads, moleculeID string) ([]*beads.Issue, bool,
 	// Check completion: list all children to detect "all closed" state.
 	// bd ready --mol only returns open+unblocked steps, so it can't distinguish
 	// "all complete" from "all blocked".
-	children, err := b.List(beads.ListOptions{
-		Parent:   moleculeID,
-		Status:   "all",
-		Priority: -1,
-	})
+	children, err := listChildrenAcrossTables(b, moleculeID)
 	if err != nil {
 		return nil, false, fmt.Errorf("listing molecule steps: %w", err)
 	}
@@ -281,23 +283,20 @@ func handleStepContinue(cwd, townRoot string, nextStep *beads.Issue, dryRun bool
 		return fmt.Errorf("cannot determine agent identity (role: %s)", roleCtx.Role)
 	}
 
-	// Get git root for hook files
-	gitRoot, err := getGitRoot()
-	if err != nil {
-		return fmt.Errorf("finding git root: %w", err)
-	}
-
 	if dryRun {
 		fmt.Printf("\n[dry-run] Would pin next step: %s\n", nextStep.ID)
 		fmt.Printf("[dry-run] Would respawn pane\n")
 		return nil
 	}
 
-	// Pin the next step bead
-	pinCmd := exec.Command("bd", "update", nextStep.ID, "--status=pinned", "--assignee="+agentID)
-	pinCmd.Dir = gitRoot
-	pinCmd.Stderr = os.Stderr
-	if err := pinCmd.Run(); err != nil {
+	// Pin the next step in its owning database. Patrol steps use hq-* IDs even
+	// when the witness runs under a rig directory.
+	pinnedStatus := "pinned"
+	stepB := beads.New(resolveMoleculeWorkDir(townRoot, cwd, nextStep.ID))
+	if err := stepB.Update(nextStep.ID, beads.UpdateOptions{
+		Status:   &pinnedStatus,
+		Assignee: &agentID,
+	}); err != nil {
 		return fmt.Errorf("pinning next step: %w", err)
 	}
 
@@ -367,16 +366,10 @@ func handleParallelSteps(cwd, townRoot, _ string, steps []*beads.Issue, dryRun b
 	fmt.Printf("\n%s Executing parallel steps...\n", style.Bold.Render("🔄"))
 
 	// Mark all steps as in_progress
-	gitRoot, err := getGitRoot()
-	if err != nil {
-		return fmt.Errorf("finding git root: %w", err)
-	}
-
 	for _, step := range steps {
-		markCmd := exec.Command("bd", "update", step.ID, "--status=in_progress")
-		markCmd.Dir = gitRoot
-		markCmd.Stderr = os.Stderr
-		if err := markCmd.Run(); err != nil {
+		inProgressStatus := "in_progress"
+		stepB := beads.New(resolveMoleculeWorkDir(townRoot, cwd, step.ID))
+		if err := stepB.Update(step.ID, beads.UpdateOptions{Status: &inProgressStatus}); err != nil {
 			style.PrintWarning("could not mark step %s as in_progress: %v", step.ID, err)
 		}
 	}
