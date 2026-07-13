@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/formula"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -256,6 +257,7 @@ func runMoleculeProgress(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
+	reconcileActiveFormulaLedger(root, children, &progress)
 
 	// Sort ready steps by sequence number so step 1 comes before step 2, etc.
 	sortStepIDsBySequence(progress.ReadySteps)
@@ -314,6 +316,65 @@ func extractMoleculeID(description string) string {
 		}
 	}
 	return ""
+}
+
+// reconcileActiveFormulaLedger keeps active molecule progress stable when
+// closed-only wisp GC has removed completed child rows. The formula is the
+// canonical step ledger; only missing steps before the active frontier are
+// inferred complete. Surviving children must match the ledger unambiguously so
+// custom or unrelated molecule shapes retain their row-derived progress.
+func reconcileActiveFormulaLedger(root *beads.Issue, children []*beads.Issue, progress *MoleculeProgressInfo) {
+	if root == nil || progress == nil || !root.Ephemeral ||
+		(root.Status != beads.StatusHooked && root.Status != string(beads.StatusInProgress)) {
+		return
+	}
+
+	attachment := beads.ParseAttachmentFields(root)
+	if attachment == nil || attachment.AttachedFormula == "" {
+		return
+	}
+	content, err := formula.GetEmbeddedFormulaContent(attachment.AttachedFormula)
+	if err != nil {
+		return
+	}
+	ledger, err := formula.Parse(content)
+	if err != nil || len(ledger.Steps) <= progress.TotalSteps {
+		return
+	}
+
+	indexesByTitle := make(map[string][]int, len(ledger.Steps))
+	for i, step := range ledger.Steps {
+		indexesByTitle[step.Title] = append(indexesByTitle[step.Title], i)
+	}
+
+	matched := make([]bool, len(ledger.Steps))
+	frontier := len(ledger.Steps)
+	for _, child := range children {
+		indexes := indexesByTitle[child.Title]
+		if len(indexes) != 1 || matched[indexes[0]] {
+			return
+		}
+		index := indexes[0]
+		matched[index] = true
+		if (child.Status == beads.StatusPinned || child.Status == string(beads.StatusInProgress)) && index < frontier {
+			frontier = index
+		}
+	}
+	if frontier == len(ledger.Steps) {
+		for i, stepMatched := range matched {
+			if stepMatched {
+				frontier = i
+				break
+			}
+		}
+	}
+
+	for i := 0; i < frontier; i++ {
+		if !matched[i] {
+			progress.DoneSteps++
+		}
+	}
+	progress.TotalSteps = len(ledger.Steps)
 }
 
 func resolveMoleculeWorkDir(townRoot, workDir, moleculeID string) string {
@@ -660,6 +721,7 @@ func getMoleculeProgressInfo(b *beads.Beads, moleculeRootID string) (*MoleculePr
 			}
 		}
 	}
+	reconcileActiveFormulaLedger(root, children, progress)
 
 	// Sort ready steps by sequence number so step 1 comes before step 2, etc.
 	sortStepIDsBySequence(progress.ReadySteps)

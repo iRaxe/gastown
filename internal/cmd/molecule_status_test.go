@@ -186,6 +186,47 @@ esac
 	}
 }
 
+func TestGetMoleculeProgressInfoUsesActiveFormulaLedgerAfterClosedChildGC(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd script uses POSIX shell")
+	}
+
+	binDir := t.TempDir()
+	bdScript := `#!/bin/sh
+case "$*" in
+  *"show hq-wisp-patrol --json"*)
+    printf '%s\n' '[{"id":"hq-wisp-patrol","title":"mol-witness-patrol","status":"hooked","description":"attached_molecule: hq-wisp-patrol\nattached_formula: mol-witness-patrol","ephemeral":true}]'
+    ;;
+  *"list --json"*"--parent=hq-wisp-patrol"*)
+    printf '%s\n' '[]'
+    ;;
+  *"query --json"*"parent=\"hq-wisp-patrol\""*)
+    printf '%s\n' '[{"id":"hq-wisp-step-3","title":"Check refinery, mayor, and deacon health","status":"pinned","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-4","title":"Inspect all active polecats","status":"open","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-5","title":"Check timer gates for expiration","status":"open","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-6","title":"Check if active swarm is complete","status":"open","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-7","title":"End-of-cycle inbox hygiene","status":"open","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-8","title":"Check own context limit","status":"open","parent":"hq-wisp-patrol","ephemeral":true},{"id":"hq-wisp-step-9","title":"Loop or exit for respawn","status":"open","parent":"hq-wisp-patrol","ephemeral":true}]'
+    ;;
+  *)
+    printf '%s\n' '[]'
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	beads.ResetBdAllowStaleCacheForTest()
+	t.Cleanup(beads.ResetBdAllowStaleCacheForTest)
+
+	progress, err := getMoleculeProgressInfo(beads.New(t.TempDir()), "hq-wisp-patrol")
+	if err != nil {
+		t.Fatalf("getMoleculeProgressInfo: %v", err)
+	}
+	if progress == nil {
+		t.Fatal("progress = nil")
+	}
+	if progress.TotalSteps != 9 || progress.DoneSteps != 2 {
+		t.Fatalf("progress = %#v, want stable 9-step ledger with 2 completed steps", progress)
+	}
+}
+
 func TestRunMoleculeProgressRoutesHQEphemeralStepsFromRig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("mock bd script uses POSIX shell")
