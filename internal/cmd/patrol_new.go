@@ -62,6 +62,7 @@ func runPatrolNew(cmd *cobra.Command, args []string) error {
 			PatrolMolName: constants.MolWitnessPatrol,
 			BeadsDir:      roleInfo.TownRoot,
 			Assignee:      roleInfo.Rig + "/witness",
+			ExtraVars:     buildWitnessPatrolVars(roleInfo),
 		}
 	case RoleRefinery:
 		cfg = PatrolConfig{
