@@ -585,6 +585,47 @@ func TestRunWeeklyRollupStopsBeforeMailWhenAuditCloseFails(t *testing.T) {
 	assertNoMailSent(t, mailLog)
 }
 
+func TestFindExistingWeeklyRollupIncludesClosedEvents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script command stubs not supported on Windows")
+	}
+
+	binDir := t.TempDir()
+	argsLog := filepath.Join(t.TempDir(), "bd-args.log")
+	bdScript := `#!/bin/sh
+printf '%s\n' "$*" > "$BD_ARGS_LOG"
+case "$*" in
+  *--status=all*)
+    printf '%s\n' '[{"id":"hq-existing","title":"Weekly Compaction Rollup 2026-07-13 to 2026-07-20","status":"closed"}]'
+    ;;
+  *)
+    printf '[]\n'
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_ARGS_LOG", argsLog)
+
+	got, err := findExistingWeeklyRollup("2026-07-13", "2026-07-20")
+	if err != nil {
+		t.Fatalf("findExistingWeeklyRollup: %v", err)
+	}
+	if got != "hq-existing" {
+		t.Fatalf("existing weekly rollup = %q, want hq-existing", got)
+	}
+
+	args, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatalf("read bd args: %v", err)
+	}
+	if !strings.Contains(string(args), "--status=all") {
+		t.Fatalf("bd args = %q, want --status=all", string(args))
+	}
+}
+
 func resetCompactReportFlags(t *testing.T) {
 	oldDryRun := compactReportDryRun
 	oldWeekly := compactReportWeekly
