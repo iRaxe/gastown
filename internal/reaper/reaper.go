@@ -48,14 +48,15 @@ func isTableNotFound(err error) bool {
 	return strings.Contains(msg, "table not found") || strings.Contains(msg, "doesn't exist")
 }
 
-// DiscoverDatabases queries SHOW DATABASES on the Dolt server and returns
+// DiscoverDatabasesStrict queries SHOW DATABASES on the Dolt server and returns
 // all production databases, filtering out system databases and test pollution.
-// Falls back to DefaultDatabases on any error.
-func DiscoverDatabases(host string, port int) []string {
+// Unlike DiscoverDatabases, it preserves catalog errors for callers that must
+// distinguish an unavailable catalog from an unknown requested database.
+func DiscoverDatabasesStrict(host string, port int) ([]string, error) {
 	dsn := fmt.Sprintf("root@tcp(%s:%d)/?parseTime=true&timeout=5s", host, port)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return DefaultDatabases
+		return nil, fmt.Errorf("open catalog connection: %w", err)
 	}
 	defer db.Close()
 
@@ -64,7 +65,7 @@ func DiscoverDatabases(host string, port int) []string {
 
 	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
 	if err != nil {
-		return DefaultDatabases
+		return nil, fmt.Errorf("query database catalog: %w", err)
 	}
 	defer rows.Close()
 
@@ -72,7 +73,7 @@ func DiscoverDatabases(host string, port int) []string {
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			continue
+			return nil, fmt.Errorf("scan database catalog row: %w", err)
 		}
 		if name == "information_schema" || name == "mysql" {
 			continue
@@ -90,8 +91,21 @@ func DiscoverDatabases(host string, port int) []string {
 		}
 		databases = append(databases, name)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read database catalog: %w", err)
+	}
 
 	if len(databases) == 0 {
+		return nil, fmt.Errorf("database catalog contained no production databases")
+	}
+	return databases, nil
+}
+
+// DiscoverDatabases preserves the legacy best-effort behavior for background
+// callers that can safely fall back when the catalog is temporarily unavailable.
+func DiscoverDatabases(host string, port int) []string {
+	databases, err := DiscoverDatabasesStrict(host, port)
+	if err != nil {
 		return DefaultDatabases
 	}
 	return databases

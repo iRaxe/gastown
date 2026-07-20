@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +17,50 @@ func TestReaperDatabaseNamesTrimsConfiguredList(t *testing.T) {
 	want := []string{"hq", "gastown", "beads"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("reaperDatabaseNames() = %#v, want %#v", got, want)
+	}
+}
+
+func TestValidateRequestedReaperDatabasesClassifiesUnknownNameAsCallerInput(t *testing.T) {
+	discovered := []string{"hq", "testrip"}
+
+	if err := validateRequestedReaperDatabases([]string{"testrip"}, discovered); err != nil {
+		t.Fatalf("discovered database rejected: %v", err)
+	}
+
+	err := validateRequestedReaperDatabases([]string{"tesstrip"}, discovered)
+	if err == nil {
+		t.Fatal("misspelled database should be rejected")
+	}
+	for _, want := range []string{"caller input error", `unknown requested database "tesstrip"`, "testrip"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestValidatedReaperDatabaseNamesPreservesCatalogFailure(t *testing.T) {
+	oldDB, oldHost, oldPort := reaperDB, reaperHost, reaperPort
+	t.Cleanup(func() {
+		reaperDB, reaperHost, reaperPort = oldDB, oldHost, oldPort
+	})
+
+	reaperHost = "127.0.0.1"
+	reaperPort = 1
+
+	for _, requested := range []string{"", "testrip"} {
+		t.Run("db="+requested, func(t *testing.T) {
+			reaperDB = requested
+			_, err := validatedReaperDatabaseNames()
+			if err == nil {
+				t.Fatal("unreachable catalog should return an error")
+			}
+			if !strings.Contains(err.Error(), "database catalog discovery failed") {
+				t.Fatalf("error %q should preserve catalog failure classification", err)
+			}
+			if strings.Contains(err.Error(), "caller input error") {
+				t.Fatalf("catalog failure misclassified as caller input: %v", err)
+			}
+		})
 	}
 }
 

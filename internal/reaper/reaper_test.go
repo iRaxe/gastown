@@ -67,6 +67,25 @@ func TestDogReaperFormulaAlertThresholdMatchesDefault(t *testing.T) {
 	}
 }
 
+func TestDogReaperFormulaScansDiscoveredDatabasesWithoutTranscription(t *testing.T) {
+	data, err := os.ReadFile("../formula/formulas/mol-dog-reaper.formula.toml")
+	if err != nil {
+		t.Fatalf("read mol-dog-reaper formula: %v", err)
+	}
+
+	source := string(data)
+	scanStep := sourceBetween(t, source, `id = "scan"`, `id = "reap"`)
+	if strings.Contains(scanStep, "gt reaper scan --db=<name>") {
+		t.Fatal("scan step must not require manually transcribing discovered database names")
+	}
+	if !strings.Contains(scanStep, "gt reaper scan \\") {
+		t.Fatal("scan step should invoke one auto-discovered scan")
+	}
+	if strings.Contains(source, "--db=<name>") {
+		t.Fatal("reaper workflow must not require manually transcribing database names in any step")
+	}
+}
+
 func TestFormatJSON(t *testing.T) {
 	result := FormatJSON(map[string]int{"count": 42})
 	if result == "" {

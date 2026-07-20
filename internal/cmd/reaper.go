@@ -41,6 +41,35 @@ func reaperDatabaseNames() []string {
 	return databases
 }
 
+func validateRequestedReaperDatabases(requested, discovered []string) error {
+	available := make(map[string]struct{}, len(discovered))
+	for _, name := range discovered {
+		available[strings.ToLower(name)] = struct{}{}
+	}
+	for _, name := range requested {
+		if _, ok := available[strings.ToLower(name)]; !ok {
+			return fmt.Errorf("caller input error: unknown requested database %q; discovered databases: %s",
+				name, strings.Join(discovered, ", "))
+		}
+	}
+	return nil
+}
+
+func validatedReaperDatabaseNames() ([]string, error) {
+	discovered, err := reaper.DiscoverDatabasesStrict(reaperHost, reaperPort)
+	if err != nil {
+		return nil, fmt.Errorf("database catalog discovery failed: %w", err)
+	}
+	if reaperDB == "" {
+		return discovered, nil
+	}
+	databases := reaperDatabaseNames()
+	if err := validateRequestedReaperDatabases(databases, discovered); err != nil {
+		return nil, err
+	}
+	return databases, nil
+}
+
 func defaultReaperEndpoint() (string, int) {
 	host := agentconfig.ResolveDoltHost("")
 	port := 0
@@ -142,7 +171,10 @@ The Dog uses this to understand the state before deciding what to reap.`,
 			return fmt.Errorf("invalid --stale-age: %w", err)
 		}
 
-		databases := reaperDatabaseNames()
+		databases, err := validatedReaperDatabaseNames()
+		if err != nil {
+			return err
+		}
 
 		var results []*reaper.ScanResult
 		for i, dbName := range databases {
@@ -234,7 +266,10 @@ Returns the count of reaped wisps. Use --dry-run to preview.`,
 			return fmt.Errorf("invalid --max-age: %w", err)
 		}
 
-		databases := reaperDatabaseNames()
+		databases, err := validatedReaperDatabaseNames()
+		if err != nil {
+			return err
+		}
 
 		var results []*reaper.ReapResult
 		for i, dbName := range databases {
@@ -330,7 +365,10 @@ Returns counts of purged rows. Use --dry-run to preview.`,
 			return fmt.Errorf("invalid --mail-age: %w", err)
 		}
 
-		databases := reaperDatabaseNames()
+		databases, err := validatedReaperDatabaseNames()
+		if err != nil {
+			return err
+		}
 
 		var results []*reaper.PurgeResult
 		for i, dbName := range databases {
@@ -412,7 +450,10 @@ Returns the count of closed issues. Use --dry-run to preview.`,
 			return fmt.Errorf("invalid --stale-age: %w", err)
 		}
 
-		databases := reaperDatabaseNames()
+		databases, err := validatedReaperDatabaseNames()
+		if err != nil {
+			return err
+		}
 
 		var results []*reaper.AutoCloseResult
 		for i, dbName := range databases {
@@ -486,7 +527,10 @@ var reaperRunCmd = &cobra.Command{
 This is the inline fallback for when Dog dispatch is unavailable.
 Normally the daemon dispatches a Dog to execute the mol-dog-reaper formula.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		databases := reaperDatabaseNames()
+		databases, err := validatedReaperDatabaseNames()
+		if err != nil {
+			return err
+		}
 
 		maxAge, err := time.ParseDuration(reaperMaxAge)
 		if err != nil {
