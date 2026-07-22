@@ -59,6 +59,65 @@ func TestManager_StartForegroundDeprecated(t *testing.T) {
 	}
 }
 
+func TestManager_StartReopensClosedAgentBeadBeforeSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd/tmux scripts use POSIX shell")
+	}
+	setupTestRegistry(t)
+
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+	for _, dir := range []string{
+		filepath.Join(townRoot, "mayor"),
+		filepath.Join(townRoot, ".beads"),
+		filepath.Join(rigPath, ".runtime"),
+		filepath.Join(rigPath, "refinery", "rig"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0o644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	if err := beads.WriteRoutes(filepath.Join(townRoot, ".beads"), []beads.Route{{Prefix: "hub-", Path: "testrig/mayor/rig"}}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "commands.log")
+	writeClosedAgentBeadMockBD(t, binDir, logPath)
+	writeFailingSessionMockTmux(t, binDir, logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: rigPath})
+	err := mgr.Start(false, "")
+	if err == nil || !strings.Contains(err.Error(), "creating tmux session") {
+		t.Fatalf("Start error = %v, want tmux session creation failure after identity repair", err)
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	log := string(logData)
+	reopenAt := strings.Index(log, "reopen hub-testrig-refinery")
+	newSessionAt := strings.Index(log, "new-session")
+	if reopenAt == -1 {
+		t.Fatalf("Start did not reopen the closed refinery agent bead; log:\n%s", log)
+	}
+	if newSessionAt == -1 {
+		t.Fatalf("Start did not reach tmux session creation; log:\n%s", log)
+	}
+	if reopenAt > newSessionAt {
+		t.Fatalf("Start reopened agent bead after creating tmux session; log:\n%s", log)
+	}
+	wantTownBeadsDir := "BEADS_DIR=" + filepath.Join(townRoot, ".beads")
+	if !strings.Contains(log, wantTownBeadsDir) {
+		t.Fatalf("Start did not route agent bead repair through town beads dir %q; log:\n%s", wantTownBeadsDir, log)
+	}
+}
+
 func TestManager_SessionName(t *testing.T) {
 	mgr, _ := setupTestManager(t)
 
@@ -292,6 +351,62 @@ esac
 `
 	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake bd: %v", err)
+	}
+}
+
+func writeClosedAgentBeadMockBD(t *testing.T, binDir, logPath string) {
+	t.Helper()
+	script := `#!/bin/sh
+	printf 'bd BEADS_DIR=%s %s\n' "$BEADS_DIR" "$*" >> "` + logPath + `"
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  version)
+    echo "bd test"
+    ;;
+  show)
+	printf '%s\n' '[{"id":"hub-testrig-refinery","title":"Refinery","issue_type":"task","labels":["gt:agent"],"status":"closed","description":"role_type: refinery\nrig: testrig\nagent_state: idle"}]'
+    ;;
+  create)
+    exit 1
+    ;;
+  reopen|update)
+    exit 0
+    ;;
+  *)
+    echo "unexpected bd command: $*" >&2
+    exit 9
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+}
+
+func writeFailingSessionMockTmux(t *testing.T, binDir, logPath string) {
+	t.Helper()
+	script := `#!/bin/sh
+printf 'tmux %s\n' "$*" >> "` + logPath + `"
+case "$*" in
+  *has-session*)
+    exit 1
+    ;;
+  *new-session*)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
 	}
 }
 

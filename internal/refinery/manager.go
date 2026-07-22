@@ -191,6 +191,10 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 		}
 	}
 
+	if err := m.ensureAgentBead(townRoot); err != nil {
+		return err
+	}
+
 	// Note: No PID check per ZFC - tmux session is the source of truth
 
 	// Background mode: spawn a Claude agent in a tmux session
@@ -331,6 +335,22 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 	session.RecordAgentInstantiateFromDir(context.Background(), runID, runtimeConfig.ResolvedAgent,
 		"refinery", "refinery", sessionID, m.rig.Name, townRoot, "", refineryRigDir)
 
+	return nil
+}
+
+func (m *Manager) ensureAgentBead(townRoot string) error {
+	prefix := beads.GetPrefixForRig(townRoot, m.rig.Name)
+	agentID := beads.RefineryBeadIDWithPrefix(prefix, m.rig.Name)
+	title := fmt.Sprintf("Refinery for %s - processes merge queue.", m.rig.Name)
+	fields := &beads.AgentFields{
+		RoleType:   "refinery",
+		Rig:        m.rig.Name,
+		AgentState: "idle",
+	}
+	bd := beads.NewWithBeadsDir(m.rig.Path, filepath.Join(townRoot, ".beads")).ForAgentBead()
+	if _, err := bd.CreateOrReopenAgentBead(agentID, title, fields); err != nil {
+		return fmt.Errorf("creating or reopening refinery agent bead %s: %w", agentID, err)
+	}
 	return nil
 }
 

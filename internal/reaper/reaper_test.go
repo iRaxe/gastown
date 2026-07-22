@@ -374,6 +374,51 @@ func TestScanExcludesAgentBeads(t *testing.T) {
 	}
 }
 
+// TestAutoCloseExcludesAgentBeads guards permanent agent identity beads from
+// the stale issue auto-closer. Agent beads are ordinary task issues identified
+// by the gt:agent label, so issue_type exclusions alone cannot protect them.
+func TestAutoCloseExcludesAgentBeads(t *testing.T) {
+	now := time.Now().UTC()
+	state := &fakeReaperState{
+		issues: map[string]*fakeIssue{
+			"agent-refinery": {
+				id:        "agent-refinery",
+				title:     "Refinery",
+				status:    "open",
+				priority:  2,
+				issueType: "task",
+				updatedAt: now.Add(-48 * time.Hour),
+				labels:    []string{"gt:agent"},
+			},
+			"ordinary-task": {
+				id:        "ordinary-task",
+				title:     "Ordinary stale task",
+				status:    "open",
+				priority:  2,
+				issueType: "task",
+				updatedAt: now.Add(-48 * time.Hour),
+			},
+		},
+		ops: map[int][]string{},
+	}
+	db := openFakeReaperDB(t, state)
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := AutoClose(db, "testdb", 24*time.Hour, false)
+	if err != nil {
+		t.Fatalf("AutoClose: %v", err)
+	}
+	if result.Closed != 1 {
+		t.Fatalf("AutoClose closed = %d, want 1", result.Closed)
+	}
+	if got := state.issueStatus("agent-refinery"); got != "open" {
+		t.Fatalf("agent refinery status = %q, want open", got)
+	}
+	if got := state.issueStatus("ordinary-task"); got != "closed" {
+		t.Fatalf("ordinary task status = %q, want closed", got)
+	}
+}
+
 func TestClosedMoleculeStepReapBehavior(t *testing.T) {
 	now := time.Now().UTC()
 	state := &fakeReaperState{
@@ -532,6 +577,16 @@ type fakeWisp struct {
 	createdAt time.Time
 }
 
+type fakeIssue struct {
+	id        string
+	title     string
+	status    string
+	priority  int
+	issueType string
+	updatedAt time.Time
+	labels    []string
+}
+
 type fakeDep struct {
 	issueID           string
 	dependsOnID       string
@@ -542,9 +597,46 @@ type fakeDep struct {
 type fakeReaperState struct {
 	mu       sync.Mutex
 	wisps    map[string]*fakeWisp
+	issues   map[string]*fakeIssue
 	deps     []fakeDep
 	nextConn int
 	ops      map[int][]string
+}
+
+func (s *fakeReaperState) issueStatus(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.issues[id].status
+}
+
+func (s *fakeReaperState) autoCloseCandidatesLocked(cutoff time.Time) []*fakeIssue {
+	protected := map[string]bool{
+		"gt:standing-orders": true,
+		"gt:keep":            true,
+		"gt:role":            true,
+		"gt:rig":             true,
+		"gt:agent":           true,
+	}
+	var candidates []*fakeIssue
+	for _, issue := range s.issues {
+		if (issue.status != "open" && issue.status != "in_progress") ||
+			!issue.updatedAt.Before(cutoff) || issue.priority <= 1 ||
+			issue.issueType == "epic" || issue.issueType == "convoy" {
+			continue
+		}
+		excluded := false
+		for _, label := range issue.labels {
+			if protected[label] {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
+			candidates = append(candidates, issue)
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].id < candidates[j].id })
+	return candidates
 }
 
 func (s *fakeReaperState) status(id string) string {
@@ -703,6 +795,16 @@ func (c *fakeReaperConn) QueryContext(_ context.Context, query string, args []dr
 	c.state.record(c.id, "QUERY "+normalized)
 
 	switch {
+	case strings.Contains(normalized, "SELECT i.id, i.title, i.updated_at FROM issues i"):
+		if !strings.Contains(normalized, "'gt:agent'") {
+			return nil, fmt.Errorf("auto-close query does not protect gt:agent beads: %s", normalized)
+		}
+		candidates := c.state.autoCloseCandidatesLocked(namedTime(args))
+		rows := make([][]driver.Value, 0, len(candidates))
+		for _, issue := range candidates {
+			rows = append(rows, []driver.Value{issue.id, issue.title, issue.updatedAt})
+		}
+		return &fakeReaperRows{cols: []string{"id", "title", "updated_at"}, rows: rows}, nil
 	case strings.Contains(normalized, "SELECT COUNT(*) FROM wisps w") && strings.Contains(normalized, "created_at <"):
 		if err := validateStaleWispQuery(normalized); err != nil {
 			return nil, err
@@ -743,6 +845,16 @@ func (c *fakeReaperConn) ExecContext(_ context.Context, query string, args []dri
 	c.state.record(c.id, "EXEC "+normalized)
 
 	switch {
+	case strings.Contains(normalized, ".issues SET status = 'closed'"):
+		affected := int64(0)
+		for _, arg := range args {
+			id, _ := arg.Value.(string)
+			if issue := c.state.issues[id]; issue != nil && (issue.status == "open" || issue.status == "in_progress") {
+				issue.status = "closed"
+				affected++
+			}
+		}
+		return fakeReaperResult(affected), nil
 	case strings.HasPrefix(normalized, "UPDATE wisps SET status='closed'"):
 		affected := int64(0)
 		for _, arg := range args {
